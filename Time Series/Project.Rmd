@@ -1,0 +1,201 @@
+---
+title: "Comparative Simulations of the Validity of ARMA Model Diagnostics Using Residual and Squared-Residual Autocorrelations"
+author: "Funfay Jen"
+date: "`r Sys.Date()`"
+output: pdf_document
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhead[LO,LE]{Project}
+- \fancyhead[RO,RE]{ST565:~Time Series, Winter 2020}
+- \fancyfoot[LO,LE]{}
+- \usepackage{mathdots}
+- \DeclareMathOperator*{\E}{\mathbb{E}}
+- \usepackage{parskip}
+- \usepackage{bm}
+- \usepackage{multirow}
+- \usepackage{multicol}
+- \usepackage{color, colortbl}
+- \definecolor{Gray}{gray}{0.9}
+---
+
+```{r setup, include=FALSE}
+#library(faraway)
+library(tidyverse)
+#library(gridExtra)
+##library(broom)
+knitr::opts_chunk$set(message=F, warning=F, fig.height=3, fig.width=4, fig.align='center', echo = TRUE, cache=T)
+
+m2l <- function(matr) {
+    printmrow <- function(x) {
+        ret <- paste(paste(x, collapse = " & "), "\\\\")
+        sprintf(ret)
+}
+    out <- apply(matr, 1, printmrow)
+    out2 <- paste("\\begin{bmatrix}", paste(out, collapse=''), "\\end{bmatrix}")
+    return(out2)
+}
+```
+
+\makeatletter
+\let\ps@plain\ps@fancy
+\makeatother
+
+### Introduction
+Model fitting always generates a model; a sense of sanity can be gained with diagnostic tools that validate the model. In this project, we look at not the validity of the models but the diagnostic tools and see whether they are themselves valid. In this course we have discussed in week 7 the test on residuals and the Ljung-Box-Pierce test (which was used in some group projects, including the one that went really smooth). The paper by McLeod and Li offers a very similar test based on the squared residuals. In this project we review the concepts in their paper and seek to replicate their results while comparing with the 
+methods introduced in class.
+
+### Concepts
+The ARMA(p, q) model of a stationary mean 0 time series can be written 
+\[\phi(B)X_t = \theta(B)Z_t\]
+where $\phi(B)$ and $\theta(B)$ are the characteristic polynomials in the backshift operator $B$ and $Z_t$ is white noise.
+
+Box and Pierce obtained the distribution of the residual autocorrelation function
+\[\hat{r_z}(k) = \sum_{k+1}^n\hat{Z_t}\hat{Z_{t-k}}/\sum_1^n\hat{Z_t}^2\]
+
+They also suggested a large sample Q-statistic for testing the whiteness of the $Z_t$ sequence. For smaller samples, Ljung and Box suggested the portmanteau statistic
+\[Q_z = n(n+2)\sum_1^M\hat{r_z}^2(i)/(n-i)\]
+for testing the whiteness of the $Z_t$ sequence and it appproimately follows $\chi^2(M-p-q)$. This coincides with our week 7 dicussion on diagnositics.
+
+In some applications, the authors argue that considering the squared residuals might be worthwhile. The autocorrelation function of $\hat{Z_t^2}$ is
+\[\hat{r_{zz}}(k) = \sum_{k+1}^n(\hat{Z_t}^2 - \hat{\sigma}^2)(\hat{Z_{t-k}}^2 -\hat{\sigma}^2) 
+/ \sum_1^n(\hat{Z_t}^2 - \hat{\sigma}^2)\]
+Where  $\hat{\sigma}^2$ is the estimated noise variance.
+
+It can be shown that for a fixed M,
+\[\sqrt(n)\hat{r_{zz}} = (\hat{r_{zz}}(1), \ldots, \hat{r_{zz}}(M))\]
+is asymptotically standard normal as $n \to \infty$.
+The portmanteau statistic
+\[Q_{zz} = n(n+2)\sum_1^M\hat{r_{zz}}^2(i)/(n-i)\]
+for testing the whiteness of the $Z_t$ sequence and it  asymptotically follows $\chi^2(M)$.
+
+The paper proceeds with a small-sample simulation after some awe-inspring steps of derivation, which is the cornerstone of this paper I think.
+
+### Simulation
+The small sample applicability of the foregoing resultss is examined using the AR(1) models:
+\[X_t = \phi X{t-1} + Z_t\]
+where $t = 1, \ldots, n$ with $n = 50, 100, 200; \phi = 0, \pm 0.3, \pm 0.6, \pm 0.9$ and $Z_t$ white noise. Each of the 21 models is simulated 1000 times and the We use the autocorrelation at lag 1 and the portmanteau statistic for testing model adequacy, and the same procedure is applied for both the residuals and the squared residuals to compare the differences. The rejection rates at a nominal 5% level is examined. The table is listed below with the results from using the residuals tacked on in hte last two columns. We see that we obtain almost identical results as in the paper. The test on autocorrelations is less valid than that on the portmanteau statistic, although the difference diminishes as the sample size increases. Also note that the test using squared residuals is more valid than using just the raw residuals if we compare the $Q$ statistic. For some reason the autocorrelation test using raw residuals is wildly off, which makes me think that I might have had a coding problem somewhere, but I haven't found any error yet so I have to trust the table for now.
+
+### Parting Thought
+The paper is one of the early papers on diagnostics. As such, there might be potential weaknesses. For one thing, the simulation was only done for an AR(1) model, which does not support any generalization of its kind. Also, while they did explore several configurations of the paramameter space, such simulations is inherently deficient in its capability to encompass a fuller parameter space. The notion of what constitutes a small sample is also worth thinking. Perhaps the sizes the authors chose were in light of the less mature computing power/technologies in the 80s. On the same note, much of the tests can now be automated as I did in the project. After I coded it myself, I found some packages online that does the same thing; if you look at their codes they used pretty much the same algorithm. The drawback for using that is that they don't output the other relevant statistics. (https://github.com/cran/TSA/blob/master/R/McLeod.Li.test.R)
+
+The paper also seems to define the noise sequence as IID noise in the lingo of our class. In this class however, we have defined the noise sequence in an ARMA model to be white noise, and the null hypothesis reflects that difference in definition. Perhaps that's some discrepancy in the time series literature. The paper also had a minor confusion on the null hypothesis under equation (1.3) where they said "testing the whitenoise of the residuals" when they should have said "of the errors". 
+
+Last but not the least, I don't think that the paper did a good job in explaining the motivation for using the squared residuals in the first place and how that is different from using the raw residuals. Perhaps they had assumed some background knowledge in the literature during the time of their publication.
+
+### Appendix
+
+\newcolumntype{g}{>{\columncolor{Gray}}c}
+\begin{table}[!h]
+\setlength\arrayrulewidth{1pt}
+	\begin{tabular}{|g|c|c|c|c|c|c|c|c|}
+	\hline
+	\rowcolor{Gray}
+	 n & $\phi$ & rej. $\hat{r_{ZZ}}(1)$ & rej. $\hat{Q_{ZZ}}$ & mean $Q_{ZZ}$ & Var $\hat{r_{ZZ}}(1)$ & Var $\hat{Q_{ZZ}}$ & rej. $\hat{r_{Z}}(1)$ & rej. $\hat{Q_{Z}}$ \\
+	\hline
+	50  & -0.9 & 33 & 51 & 17.82 & 0.0162 & 54.47 & 28 & 97 \\
+	50  & -0.6 & 28 & 46 & 17.84 & 0.0156 & 54.23 & 4 &  61 \\ 
+	50  & -0.3 & 32 & 35 & 17.55 & 0.0157 & 47.16 & 0 & 61 \\
+	50  & 0    & 24 & 58 & 17.89 & 0.0152 & 57.79 & 0 & 62 \\
+	50  & 0.3  & 23 & 47 & 17.83 & 0.0156 & 47.28 & 0 & 66 \\
+	50  & 0.6  & 79 & 46 & 17.72 & 0.0155 & 49.82 & 4 & 79 \\
+	50  & 0.9  & 24 & 46 & 17.64 & 0.0152 & 55.44 & 24 & 77 \\
+	100 & -0.9 & 33 & 58 & 18.71 & 0.0086 & 48.75 & 31 & 68 \\
+	100 & -0.6 & 42 & 67 & 18.47 & 0.0088 & 52.21 & 2 & 86 \\ 
+	100 & -0.3 & 37 & 43 & 18.68 & 0.0084 & 48.26 & 0 & 58\\
+	100 & 0 & 47 &  49 & 18.84 & 0.0095 & 50.39 & 0 & 64 \\
+	100 & 0.3 & 33 & 50 & 18.72 & 0.0087 & 49.36 &  0 & 70 \\
+	100 & 0.6 & 27 & 64 & 18.7 & 0.0082 & 52.65 & 2 & 61 \\
+	100 & 0.9 & 41 & 56 &  18.96 & 0.0095 & 50.03 & 35 & 86 \\
+	200 & -0.9 &  37 & 47 & 19.07 & 0.0047 & 47.25 & 34 & 70 \\
+	200 & -0.6 &  32 & 47 & 19.02 & 0.0043 & 42.07 & 3 & 64 \\ 
+	200 & -0.3 & 44 & 45 & 19.28 & 0.0045 & 48.49 & 0 & 57 \\
+	200 & 0 & 34 & 46 & 19.01 & 0.0042 & 44.56 & 0 & 64 \\
+	200 & 0.3 & 37 & 55 & 19.34 & 0.0044 & 46.75 & 0 &  51 \\
+	200 & 0.6 & 45 & 67 & 19.26 & 0.0047 & 51.91 & 1 & 59 \\
+	200 & 0.9 & 45 & 41 & 19.11 & 0.0048 & 45.83 & 26 & 61 \\
+	\hline
+	\end{tabular}
+  \caption{Table replicating the results in McLeod and Li}
+\end{table}
+```{r}
+library(TSA)
+library(aTSA)
+
+#mod <- arima(ds,order = c(1,0,0))
+#McLeod.Li.test(mod)$p
+#arch.test(mod)
+
+set.seed(573)
+ns <- c(50, 100, 200)
+phis <- c(-0.9, -0.6, -0.3, 0, 0.3, 0.6, 0.9)
+nsim <- 1000
+M <- 20
+
+for (n in ns) {
+  for (phi in phis){
+    ra.hat <- list(rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                   rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                   rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                   rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                   rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim))
+    raa.hat <- list(rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                    rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                    rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                    rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim), 
+                    rep(0, nsim), rep(0, nsim), rep(0, nsim), rep(0, nsim))
+     Qa.star <- rep(0, nsim)
+    Qaa.star <- rep(0, nsim)
+       #pvals <- rep(0, nsim)
+    for (i in seq(1, nsim, 1)) {
+      tryCatch({
+          ds <-  arima.sim(n=n, list(ar = phi))
+          #mlar <- ar(ds, aic = F, order.max = 1, method = "ml")
+          mlar <- arima(ds, order = c(1, 0, 0), method = "CSS-ML")
+        }, error=function(e){
+          ds <-  arima.sim(n=n, list(ar = phi))
+          #mlar <- ar(ds, aic = F, order.max = 1, method = "ml")
+          mlar <- arima(ds, order = c(1, 0, 0), method = "CSS-ML")}
+      )
+      
+      res <- mlar$resid
+      #n <- sum(!is.na(res))
+      sigma2.hat <- sum(res^2, na.rm=T)/n
+      # calculate ra, Qa
+      temp <- 0
+      for (j in 1:M) {
+        ra.hat[[j]][i] <- sum((res[(j+1):n] - 0)*(res[1:(n-j)] - 0), na.rm=T) /
+          sum((res - 0)^2, na.rm=T)
+        temp <- temp + ra.hat[[j]][i]^2/(n-j)
+      }
+      Qa.star[i] <- n*(n+2)*temp
+      # calculate raa, Qaa
+      temp <- 0
+      for (j in 1:M) {
+        raa.hat[[j]][i] <- sum((res[(j+1):n]^2 - sigma2.hat)*(res[1:(n-j)]^2 - sigma2.hat), na.rm=T) /
+          sum((res^2 - sigma2.hat)^2, na.rm=T)
+        temp <- temp + raa.hat[[j]][i]^2/(n-j)
+      }
+      Qaa.star[i] <- n*(n+2)*temp
+      mod <- arima(ds,order = c(1,0,0))
+      #pvals[i] <- McLeod.Li.test(mod)$p
+    }
+    cat(paste("n=", n, "phi=", phi, 
+              "\n    # rejections ra hat (1) =",
+              sum(abs(ra.hat[[1]]) > 1.96/sqrt(n)), 
+              "\n    # rejections Qa star =", sum(Qa.star > qchisq(0.95, 20-1)), 
+              "\n    mean Qa star =", round(mean(Qa.star), 2), 
+              "\n    var ra hat (1) =", round(var(ra.hat[[1]]), 4), 
+              "\n    var Qa star =", round(var(Qa.star), 2), "\n"))
+    cat(paste("n=", n, "phi=", phi, 
+              "\n    # rejections raa hat (1) =",
+              sum(abs(raa.hat[[1]]) > 1.96/sqrt(n)), 
+              "\n    # rejections Qaa star =", sum(Qaa.star > qchisq(0.95, 20)), 
+              "\n    mean Qaa star =", round(mean(Qaa.star), 2), 
+              "\n    var raa hat (1) =", round(var(raa.hat[[1]]), 4), 
+              "\n    var Qaa star =", round(var(Qaa.star), 2), "\n\n"))
+  }
+}
+
+```
+
