@@ -1,0 +1,32 @@
+---
+title: "Timer for pois_2d()"
+output: html_document
+---
+
+```{r setup, message = FALSE, include = FALSE}
+library(tidyverse)
+library(here)
+devtools::load_all()
+```
+
+## Compare the run times of the three implementations
+
+```{r}
+n_runs <- 1000
+b <- 100
+h <- 10
+lambda <- 1
+n_parts <- 5
+library(bench)
+bnch <- mark(
+  check=FALSE,
+  pois_runs_1 <- pois_2d_verifier(n_runs, b, h, lambda, n_parts, pois_2d),
+  pois_runs_2 <- pois_2d_verifier(n_runs, b, h, lambda, n_parts, pois_2d_alt),
+  pois_runs_3 <- pois_2d_verifier(n_runs, b, h, lambda, n_parts, pois_2d_simp)
+)
+bnch
+autoplot(bnch)
+```
+
+
+

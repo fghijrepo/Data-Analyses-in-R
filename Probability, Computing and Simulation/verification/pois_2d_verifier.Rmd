@@ -1,0 +1,96 @@
+---
+title: "Verifier for pois_2d()"
+output: html_document
+---
+
+```{r setup, message = FALSE, include = FALSE}
+library(tidyverse)
+library(here)
+devtools::load_all()
+```
+
+## Call the `pois_2d()` function many times to compare the resulting distribution with an ideal Poisson
+
+We start off with one implementation of the `pois_2d()` function. 
+
+```{r, eval=F}
+n_runs <- 1000
+b <- 1000
+h <- 1
+# write_rds(h, here("results", "h.rds"))
+lambda <- 1
+n_parts <- 5
+
+# generate the partition over which verification is conducted
+partition <- map(seq(0, b-b/n_parts, b/n_parts), ~c(. , . + b/n_parts))
+
+# save the N_RUNS, each a vector of around B*H*LAMBDA x-coordinates
+pois_runs <- map(1:n_runs, ~pois_2d(b, h, lambda))
+
+# write the runs of Poisson process to the RESULTS folder
+write_rds(pois_runs, here("results", "pois_runs.rds"))
+
+# create a function to avoid nested maps
+pois_counter <- function(interval, pois_runs) {
+  map_int(pois_runs, ~sum(between(., interval[1], interval[2])))
+}
+counts_per_partition <- map(partition, ~pois_counter(., pois_runs))
+
+# check the mean count first
+map(partition, ~mean(pois_counter(., pois_runs)))
+
+# get it work for one partition
+ggplot() +
+  geom_bar(aes(x = counts_per_partition[[1]], y = stat(prop))) +
+  geom_point(aes(x = 0:max(counts_per_partition[[1]]), 
+                 y = dpois(0:max(counts_per_partition[[1]]),
+                           b*h*lambda/n_parts))) +
+  geom_function(fun=dnorm, 
+                args=list(mean = b*h*lambda/n_parts, 
+                          sd = sqrt(b*h*lambda/n_parts)), 
+                color='red')
+
+map(counts_per_partition, ~ggplot() +
+  geom_bar(aes(x = ., y = stat(prop))) +
+  geom_point(aes(x = 0:max(.),
+                 y = dpois(0:max(.), b*h*lambda/n_parts))) +
+  geom_function(fun=dnorm, 
+                args=list(mean = b*h*lambda/n_parts, 
+                          sd = sqrt(b*h*lambda/n_parts)), 
+                color='red'))
+```
+
+
+
+## Extract the above code chunk into a function, and run it across various parameters and different implementations of the Poisson process
+
+The for loop and the parameters/functions are configured so that the last set being evaluated corresponds to 50 runs of the Poisson process simulated by the simplest implementation of it, the results of which will be saved out for the next stage of the pipeline, namely the animator, which can only handle up to 50 layers. 
+
+The parameters are also configured so that one can see the effects of varying the area of the rectangle and the Poisson rate.
+
+```{r}
+n_runs_vec <- rev(c(50, 100, 1000))
+b_vec <- rev(c(100, 200, 200))
+h_vec <- rev(c(10, 10, 40))
+lambda_vec <- rev(c(0.1, 0.1, 2))
+n_parts_vec <- rev(c(5, 5, 5))
+pois_2d_fn_vec <- rev(list(pois_2d_simp, pois_2d_alt, pois_2d))
+
+for (i in 1:3){
+  n_runs <- n_runs_vec[i]
+  b <- b_vec[i]
+  h <- h_vec[i]
+  lambda <- lambda_vec[i]
+  n_parts <- n_parts_vec[i]
+  pois_2d_fn <-  pois_2d_fn_vec[[i]]
+  pois_runs <- pois_2d_verifier(n_runs, b, h, lambda, n_parts, pois_2d_fn)
+}
+
+
+# write the runs of Poisson process to the RESULTS folder
+write_rds(pois_runs, here("results", "pois_runs.rds"))
+write_rds(h_vec[3], here("results", "h.rds"))
+```
+
+
+

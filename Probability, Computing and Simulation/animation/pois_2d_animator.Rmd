@@ -1,0 +1,71 @@
+---
+title: "Animator for pois_2d()"
+output: html_document
+---
+
+```{r setup, message = FALSE, include = FALSE}
+library(tidyverse)
+library(here)
+library(gganimate)
+devtools::load_all()
+```
+
+## Read the simulation results from the verifier
+```{r results='hide'}
+pois_runs <- read_rds(here("results", "pois_runs.rds"))
+h <- read_rds(here("results", "h.rds"))
+# str(pois_runs)
+```
+
+# Visualize the simulations in an animation
+```{r}
+# toy example for modifying a global variable; compare:
+
+# s <- 0
+# f <- function(x){s <<- x+s}
+# map(1:10, ~f(.))
+# 
+# s <- 0
+# f <- function(x){s <- x+s}
+# map(1:10, ~f(.))
+
+
+# count the total number of Poisson points across all runs
+n_pois_all_runs <- sum(map_int(pois_runs, length))
+
+# generate this many y-coordinates in one go, to boost efficiency
+y_coords_all_runs <- h * runif(n_pois_all_runs)
+
+
+# summon the utility function
+add_layer <- add_layer_factory()
+
+# let it do the work of building up the static ggplot
+m <- map(pois_runs, ~add_layer(.))
+
+# the final static ggplot is available through its immediate environment
+gg_pois_static <- environment(add_layer)$gg
+
+# turn static into animated with a sleight of hand by gganimate
+gg_pois_static +
+  transition_layers(layer_length = 1, transition_length = 2) +
+  enter_fade() + enter_grow() +
+  ggtitle('Now showing {closest_layer}',
+          subtitle = 'Transitioning {transitioning} of {nlayers}')
+
+# save the animation for presentation
+anim_save("animation")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

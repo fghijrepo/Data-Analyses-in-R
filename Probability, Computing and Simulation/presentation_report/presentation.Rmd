@@ -1,0 +1,57 @@
+---
+title: "ST 541 Project Presentation"
+author: "Funfay Jen"
+date: "`r Sys.Date()`"
+output:
+  ioslides_presentation: default
+  beamer_presentation:
+    theme: CambridgeUS
+    colortheme: beaver
+    fonttheme: structurebold
+  slidy_presentation: default
+subtitle:  Simulation of a 2D Poisson Process https://github.com/
+---
+
+
+# Conceptual Understanding
+
+## Converting a Poisson problem to an Exponential problem
+
+- Utilize the relationship between a Poisson RV and an Exp RV
+- More generally, the _Poisson-Gamma relationship_
+- If the time between a certain type of event is exponentially distributed with rate $\lambda$, then the number of events in a given time period of length t follows a Poisson distribution with parameter $\lambda t$.
+- Here, we take t to be an area.
+
+# Implementation
+
+## Dimension Reduction
+
+> - The 2D Poisson process on a square region is easily converted to a 1D problem
+> - In an R function, we only need to return the x-coordinates
+> - This can lead to efficiency gains if we are to simulate the 2D process over and over
+
+# Correctness Verification
+
+## One Approach for Verifying the Correctness of Implementation
+
+- Partition the the 2D region/ 1D interval
+- Simulate the Poisson process many times
+- The resulting counts in each disjoint subset should follow an appropriate Poisson distribution
+- We can also vary the **area** of the region and the **Poisson rate** to see how things change
+
+---
+
+![Simulated counts follow a Poisson Distribution](../results/emp_dist.png){#id .class width=50% height=50%}
+
+# Visualization
+## Animating the 2D Poisson process
+
+- Once the implementation passes the correctness check, we are ready to put the function to use
+- We can visualize the 2D Poisson process in a less boring way by adding a time axis and animating the (approximate) Poisson process 
+
+---
+
+![Animating the 2D Poisson Process](../results/animation.gif)
+
+
+  
