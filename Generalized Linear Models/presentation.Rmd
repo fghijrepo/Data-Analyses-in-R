@@ -1,0 +1,167 @@
+---
+title: "ST 623 Project Presentation"
+author: "Funfay Jen"
+date: "`r Sys.Date()`"
+output: 
+  beamer_presentation:
+    theme: "CambridgeUS"
+    colortheme: "beaver"
+    fonttheme: "structurebold"
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(pander)
+library(kableExtra)
+library(broom)
+knitr::opts_chunk$set(fig.height=4, fig.width=5, echo = TRUE)
+```
+
+
+## Research Question
+<!-- a description of the data, relevant inferential questions to be answered -->
+What affects the inheritance of eye colors?
+
+
+
+```{r echo=F}
+eye_colors <- read_table2("eye_color.txt", col_types=cols(
+  P_Light = col_integer(),
+  P_Hazel = col_integer(),
+  P_Dark = col_integer(),
+  G_Light = col_integer(),
+  G_Hazel = col_integer(),
+  G_Dark = col_integer(),
+  Total = col_integer(),
+  Light = col_integer()
+), col_names = c("P_Light", "P_Hazel", "P_Dark",
+                 "G_Light", "G_Hazel", "G_Dark", 
+                 "Total", "Light"), 
+skip = 1)
+```
+
+\footnotesize
+```{r echo=F}
+pander(head(eye_colors))
+```
+
+---
+
+\footnotesize
+```{r echo=F}
+pander(tail(eye_colors))
+```
+
+## Summary of Conlusions
+
+
+```{r echo=F, message=F}
+eye_colors <- eye_colors %>% mutate(
+  P = factor(sprintf("%03d", 100*P_Light + 10 * P_Hazel + P_Dark)),
+  G = factor(sprintf("%03d", 100*G_Light + 10 * G_Hazel + G_Dark))
+) %>% select(P, G, Total, Light)
+
+glmod1 <- glm(cbind(Light, Total - Light) ~ P - 1, family = binomial, data=eye_colors)
+# Let's understand the data
+eye_colors_understanding <- eye_colors %>% 
+                              group_by(P) %>% 
+                              summarize(
+                                light_freq_naive = mean(Light/Total),
+                                light_freq_sober = sum(Light)/sum(Total))
+
+inv_logit <- function(x) {exp(x) / (1 + exp(x))}
+
+light_prob <- inv_logit(coef(glmod1))
+light_prob_lo <- inv_logit(confint(glmod1))[, 1] 
+light_prob_hi <- inv_logit(confint(glmod1))[, 2] 
+
+eye_colors_understanding <- eye_colors_understanding %>% 
+                                mutate(
+                                  light_prob = light_prob,
+                                  light_prob_lo = light_prob_lo,
+                                  light_prob_hi = light_prob_hi
+                                )
+kable(eye_colors_understanding %>% select(-c(light_freq_naive)), digits = 3)
+```
+
+--- 
+
+```{r echo=F}
+pander(summary(glmod1))
+```
+
+
+## Analysis
+ <!--  and a description of the models and the methods used to answer the -->
+ <!-- inferential questions.  -->
+
+ <!-- You must perform model checking via residual analysis and  -->
+ <!-- provide other relevant justifications for the models used.  -->
+
+ <!-- Summarizing your analysis -->
+ <!-- through Tables and graphs is also very important. -->
+ 
+\small
+```{r echo=F}
+glmod1 <- glm(cbind(Light, Total - Light) ~ P - 1, family = binomial, data=eye_colors)
+glmod2 <- glm(cbind(Light, Total - Light) ~ G - 1, family = binomial, data=eye_colors)
+glmod3 <- glm(cbind(Light, Total - Light) ~ P + G - 1, family = binomial, data=eye_colors)
+
+pander(anova(glmod1, glmod3, test="Chisq"))
+pander(anova(glmod2, glmod3, test="Chisq"))
+
+
+glmod_aics <- cbind(glmod1$aic, glmod2$aic, glmod3$aic)
+colnames(glmod_aics) <- c("Model P", "Model G", "Model PG")
+pander(glmod_aics)
+```
+
+--- 
+
+```{r echo=F, fig.width=2, fig.height=2}
+# AIC only makes sense if the model is valid; so check residuals
+
+# Apart from two outliers, the Model P is very satisfying!
+eye_colors_diags1 <- augment(glmod1)
+ggplot(eye_colors_diags1, aes(glmod1$fitted, .resid)) +
+  geom_hline(yintercept = 0, size = 2, color = "white") +
+  geom_point()  +
+  ggtitle("residual plot for model P")
+
+
+ggplot(eye_colors_diags1, aes(sample = .resid)) +
+  geom_qq_line() +
+  geom_qq() +
+  ggtitle("qq-plot for model P")
+
+# # Model G fails to satisfy assumptions
+# eye_colors_diags2 <- augment(glmod2)
+# ggplot(eye_colors_diags2, aes(glmod2$fitted, .resid)) +
+#   geom_hline(yintercept = 0, size = 2, color = "white") +
+#   geom_point()
+# 
+# ggplot(eye_colors_diags2, aes(sample = .resid)) +
+#   geom_qq_line() +
+#   geom_qq()
+# 
+# # Model PG satisfies the assumptions, but is not parsimonious
+# eye_colors_diags3 <- augment(glmod3)
+# ggplot(eye_colors_diags3, aes(glmod3$fitted, .resid)) +
+#   geom_hline(yintercept = 0, size = 2, color = "white") +
+#   geom_point()
+# 
+# ggplot(eye_colors_diags3, aes(sample = .resid)) +
+#   geom_qq_line() +
+#   geom_qq()
+```
+
+---
+
+```{r echo=F, fig.width=4, fig.height=4}
+# Plot observed vs fitted probabilities, under Model P
+ggplot(eye_colors) + 
+  geom_point(aes(x = Light/Total, y = glmod1$fitted)) + 
+  geom_abline(slope = 1, intercept = 0)
+```
+
