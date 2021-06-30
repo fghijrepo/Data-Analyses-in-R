@@ -1,0 +1,711 @@
+---
+title: "ST 625 Project Report"
+author: "Hana Sagor, Funfay Jen"
+date: 15/Mar/2021
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, results=F, warning=F, message=F, fig.show="hide")
+```
+
+```{r,include=FALSE,echo=FALSE}
+library(survival)
+library(survminer)
+#library(ggplot2)
+#require(ggpubr)
+#library(survMisc)
+#library(gridExtra)
+#library(tidyr)
+#library(visreg)
+#library(splines)
+#library(dplyr)
+#library(SurvRegCensCov)
+#library(ggfortify)
+#library(snow)
+#library(snowfall)
+#library(GlobalDeviance)
+library(tidyverse)
+library(GGally)
+library(My.stepwise)
+library(pec)
+#library(prodlim)
+library(mice)
+library(gmodels)
+library(stargazer)
+data(Pbc3)
+```
+
+# Introduction
+An international multi-center placebo-controlled trial was undertaken to assess the efficacy of long-term use of CyA as the sole therapy. Three hundred forty-nine patients with PBC were randomized to receive CyA ($3 mg \cdot kg^{-1}. day^{-1}$), or placebo with follow-up for 6 years. The end point was death or liver transplantation. The variables we consider in this analysis are
+•	**ptno**: patient identification
+•	**unit**: hospital (1: Hvidovre 2: London 3: Copenhagen 4: Barcelona 5: Munich 6: Lyon)
+•	**tment**: treatment (0: placebo, 1: CyA)
+•	**sex**: (1: males, 0: females)
+•	**age**: years
+•	**stage**: histological stage (1, 2, 3, 4)
+•	**gibleed**: previous gastrointestinal bleeding (1: yes, 0: no)
+•	**crea**: creatinine (micromoles/L)
+•	**alb**: albumin (g/L)
+•	**bili**: bilirubin (micromoles/L)
+•	**alkph**: alkaline phosphatase (IU/L)
+•	**asptr**: aspartate transaminase (IU/L)
+•	**weight**: body weight (kg)
+•	**days**: observation time (days)
+•	**status**: status at exit (0: censored, 1: liver transplantation, 2 : dead)
+
+# Methods and Result 
+The goal of this analysis is to assess the effect of treatment. This involves three steps: model selection, model diagnostics, and estimation/inference. The first step involves three sub-steps: transformation of variables, determination of functional forms, and variable selection. On top of that, imputation is required for the data. The next subsections discuss each of these aspects.
+
+## Imputation
+```{r}
+## proportion of missing values
+sum(is.na(Pbc3))/(nrow(Pbc3)*ncol(Pbc3))  # 1.6%
+
+dim(Pbc3)  # 349 patients
+
+## Delete patients with missing values
+
+dim(na.omit(Pbc3)) # only 275 remaining patients; we lose the information for 74 patients
+
+# NOT a good idea to mit NAs
+
+(349-275)/349 # 21.2% of patients lost if we omit any patient with even one NA values 
+```
+There are NA values throughout the data set. One important decision is whether to omit patients altogether if they have even one NA value, or to do some imputations. Some back-of-the-envelope calculations reveal that with only 1.6% NA values, we would be deleting 21.2% of the patients if imputations are not done. This is probably not a good idea. We have tried the simplest mean and median imputations as well as more sophisticated imputations with the aid of an R package. We use the latter for the analysis, but will compare results when appropriate.
+
+```{r}
+# variable transformations, etc are advanced to here to make the computations easier,
+# but we explored them first
+pbc3 <- Pbc3
+pbc3$event <- ifelse(pbc3$status != 0, 1, 0)
+
+pbc3$na <- nelsonaalen(data = pbc3, timevar = "days",  statusvar = "event")
+length(pbc3$na)
+
+micesurv0 <- mice(pbc3, maxit = 0)
+micesurvmeth <- micesurv0$meth
+micesurvpred <- micesurv0$pred
+#micesurvmeth[c("weight")] <- "norm"
+micesurvpred[, "days"] <- 0
+micesurvmeth
+micesurvpred
+micesurv0$imp$weight
+
+# seemed as though it worked
+pbc3 - complete(micesurv0)
+pbc3 <- complete(micesurv0)
+
+
+
+pbc3$unit<-as.factor(pbc3$unit)
+pbc3$tment<-as.factor(pbc3$tment)
+pbc3$sex<-as.factor(pbc3$sex)
+pbc3$stage<-as.factor(pbc3$stage)
+pbc3$gibleed<-as.factor(pbc3$gibleed)
+
+pbc3$Lbili<-log(pbc3$bili)
+pbc3$Lcrea<-log(pbc3$crea)
+pbc3$Lalkph<-log(pbc3$alkph)
+pbc3$Lasptr<-log(pbc3$asptr)
+
+pbc3$Lbili2 <- pbc3$Lbili^2;  pbc3$Lbili3 <- pbc3$Lbili^3
+pbc3$Lalkph2 <- pbc3$Lalkph^2;  pbc3$Lalkph3 <- pbc3$Lalkph^3
+pbc3$age2 <- pbc3$age^2;  pbc3$age3 <- pbc3$age^3
+
+
+# first way
+# the help file says data should be the incomplete data. Here pbc3 is complete!
+micesurv <- mice(pbc3, predictorMatrix = micesurvpred, maxit = 10, m = 1,
+                 printFlag = FALSE, seed = 2020)
+micesurv_mira <- with(micesurv, coxph(Surv(time = days, event) ~ age+sex+weight+alb+Lbili+tment))
+
+summary(pool(micesurv_mira), conf.int = TRUE)
+ 
+# second way
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment,
+                 data = pbc3)
+summary(model2)
+
+pbc3_mice_imp <- pbc3
+```
+
+## Model Selection
+
+### Transformation of Variables
+We first inspect univariate distributions of the variables to identify and patterns and whether to perform transformations.
+
+```{r eval=F}
+summary(pbc3) # there are NA in stage (58), crea, alb,asptr,weight(10)
+ggpairs(pbc3)
+
+# the log transformations have been omitted here
+```
+ 
+Skewed data are serum bilirubin (micromoles/L), aspartate transaminase and alkaline phosphatase (IU/L), on which a log transformation is applied. We also transformed creatinine, which was not necessary. But this did not affect the final model selection since this variable turned out to be insignificant.
+
+```{r eval=F}
+# transformation for bilirubin (micromoles/L), creatinine, alkaline phosphatase (IU/L)
+ggpairs(pbc3[,c(1:7,9,13:20)])
+```
+
+### Determination of Functional Forms
+```{r}
+smoothSEcurve <- function(yy, xx) {
+# use after a call to "plot"
+# fit a lowess curve and 95% confidence interval curve
+# make list of x values
+xx.list <- min(xx) + ((0:100)/100)*(max(xx) - min(xx))
+# Then fit loess function through the points (xx, yy)
+# at the listed values
+yy.xx <- predict(loess(yy ~ xx), se=T,
+newdata=data.frame(xx=xx.list))
+lines(yy.xx$fit ~ xx.list, lwd=2,col=2)
+lines(yy.xx$fit -
+qt(0.975, yy.xx$df)*yy.xx$se.fit ~ xx.list, lty=2,col=3)
+lines(yy.xx$fit +
+qt(0.975, yy.xx$df)*yy.xx$se.fit ~ xx.list, lty=2,col=3)
+}
+```
+
+
+```{r fig.}
+fit0 <- coxph(formula = Surv(days,event)~1,data = pbc3)
+fit0_res_mar<-residuals(fit0,type = 'martingale')
+
+#### Plot the martingale residuals against continuous predictors to check functional form 
+par(mfrow=c(2,4))
+plot(pbc3$age,fit0_res_mar)
+smoothSEcurve(fit0_res_mar, pbc3$age)
+title("AGE")
+plot(pbc3$Lcrea,fit0_res_mar)
+smoothSEcurve(fit0_res_mar,pbc3$Lcrea)
+title("Log(creatinine)")
+plot(pbc3$alb,fit0_res_mar)
+smoothSEcurve(fit0_res_mar,pbc3$alb)
+title("albumin ")
+plot(pbc3$Lbili,fit0_res_mar)
+smoothSEcurve(fit0_res_mar,pbc3$Lbili)
+title("Log(bilirubin)")
+plot(pbc3$Lalkph,fit0_res_mar)
+smoothSEcurve(fit0_res_mar,pbc3$Lalkph)
+title("Log(alkaline phosphatase)")
+plot(pbc3$Lasptr,fit0_res_mar)
+smoothSEcurve(fit0_res_mar,pbc3$Lasptr)
+title("Log(aspartate transaminase)")
+plot(pbc3$weight,fit0_res_mar)
+smoothSEcurve(fit0_res_mar,pbc3$weight)
+title("weight")
+```
+
+We inspect the shape of the Martingale residuals for each continuous covariate separately. It takes some back-and-forth to try out quadratic and cubic terms for each covariate and to see how the significant covariates change. We finally arrive at candidate models with up to cubic transforms on the $age$ and $Lbili$ variables (more on the model selection process later).
+
+
+### Variable Selection
+```{r}
+# to find the most important predictors
+#pbc3 <- Pbc3
+#pbc3<-na.omit(Pbc3)
+#str(pbc3)
+
+#pbc3$event <- ifelse(pbc3$status != 0, 1, 0)
+
+
+# dummy variables are necessary since stepwise() does not honor factors in R
+pbc3$unit2 <- ifelse(pbc3$unit == 2, 1, 0)
+pbc3$unit3 <- ifelse(pbc3$unit == 3, 1, 0)
+pbc3$unit4 <- ifelse(pbc3$unit == 4, 1, 0)
+pbc3$unit5 <- ifelse(pbc3$unit == 5, 1, 0)
+pbc3$unit6 <- ifelse(pbc3$unit == 6, 1, 0)
+
+pbc3$tment1 <- ifelse(pbc3$tment == 1, 1, 0)
+
+pbc3$sex1 <- ifelse(pbc3$sex == 1, 1, 0)
+
+pbc3$stage2 <- ifelse(pbc3$stage == 2, 1, 0)
+pbc3$stage3 <- ifelse(pbc3$stage == 3, 1, 0)
+pbc3$stage4 <- ifelse(pbc3$stage == 4, 1, 0)
+
+pbc3$gibleed1 <- ifelse(pbc3$gibleed == 1, 1, 0)
+
+# pbc3$Lbili<-log(pbc3$bili)
+# pbc3$Lcrea<-log(pbc3$crea)
+# pbc3$Lalkph<-log(pbc3$alkph)
+# pbc3$Lasptr<-log(pbc3$asptr)
+
+pbc3
+str(pbc3)
+
+### Stepwise variable selection
+My.stepwise.coxph(Time='days',Status='event',variable.list=c('unit2', 'unit3', 'unit4', 'unit5', 'unit6', 'stage2', 'stage3', 'stage4', 'tment1','sex1','age', 'gibleed1', 'alb', "Lcrea", 'Lbili','Lalkph','Lasptr', "weight"),data=pbc3,sle=0.2,sls=0.15)
+```
+
+We also want to have at least some crude sense of what variables are important. We do this by carrying out the stepwise variable selection procedure. After dropping a non-significant variable ($unit6$) from the suggested final model given by the stepwise selection procedure, we arrive at a candidate model that has the following variables: $Lbili$, $age$, $alb$, $tment$,  $sex$ and $weight$. This model is identical to Model 2 in the original paper by M. Lombard et al. The rest of this report seeks to compare our results with the paper, while further assessing the suitability of this model as compared to other candidates.
+
+
+```{r}
+# somewhat "full" model (adding "stage" causes convergence issues)
+model<-coxph(formula = Surv(days,event) ~ unit+tment+sex+age+gibleed+Lcrea+alb+Lbili+Lalkph+Lasptr+weight, data = pbc3)
+summary(model)
+
+# model from stepwise() without imputation
+model1<-coxph(formula = Surv(days,event) ~ age+sex+alb+Lbili+tment, data = pbc3)
+summary(model1)
+
+# model from paper/from stepwise()
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment, data = pbc3)
+summary(model2)
+
+model3<-coxph(Surv(days, event) ~Lbili +Lbili2+Lbili3+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+
+model4<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+alb, data = pbc3)
+summary(model4)
+
+model5<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+summary(model5)
+
+AIC(model,model1,model2,model3,model4,model5)
+```
+We compare various candidate models and find that the model suggested by stepwise() and the paper has the second lowest AIC value only after the model with quadratic and cubic terms of $age$. Using simple grand mean/median imputation or omitting the patients with NAs lead us to the same ranking of AICs.
+
+```{r eval=F}
+ # imputation with mean
+
+pbc3 <- Pbc3
+pbc3$event <- ifelse(pbc3$status != 0, 1, 0)
+
+pbc3$unit<-as.factor(pbc3$unit)
+pbc3$tment<-as.factor(pbc3$tment)
+pbc3$sex<-as.factor(pbc3$sex)
+pbc3$stage<-as.factor(pbc3$stage)
+pbc3$gibleed<-as.factor(pbc3$gibleed)
+
+pbc3$weight[is.na(pbc3$weight)]<-mean(pbc3$weight,na.rm=TRUE)
+pbc3$alb[is.na(pbc3$alb)]<-mean(pbc3$alb,na.rm=TRUE)
+pbc3$asptr[is.na(pbc3$asptr)]<-mean(pbc3$asptr,na.rm=TRUE)
+
+
+pbc3$Lbili<-log(pbc3$bili)
+pbc3$Lcrea<-log(pbc3$crea)
+pbc3$Lalkph<-log(pbc3$alkph)
+pbc3$Lasptr<-log(pbc3$asptr)
+
+pbc3$Lbili2 <- pbc3$Lbili^2;  pbc3$Lbili3 <- pbc3$Lbili^3
+pbc3$Lalkph2 <- pbc3$Lalkph^2;  pbc3$Lalkph3 <- pbc3$Lalkph^3
+pbc3$age2 <- pbc3$age^2;  pbc3$age3 <- pbc3$age^3
+
+
+# somewhat "full" model (adding "stage" causes convergence issues)
+model<-coxph(formula = Surv(days,event) ~ unit+tment+sex+age+gibleed+Lcrea+alb+Lbili+Lalkph+Lasptr+weight, data = pbc3)
+summary(model)
+
+# model from stepwise() without imputation
+model1<-coxph(formula = Surv(days,event) ~ age+sex+alb+Lbili+tment, data = pbc3)
+summary(model1)
+
+# model from paper/from stepwise()
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment, data = pbc3)
+summary(model2)
+
+model3<-coxph(Surv(days, event) ~Lbili +Lbili2+Lbili3+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+
+model4<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+alb, data = pbc3)
+summary(model4)
+
+model5<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+summary(model5)
+
+AIC(model,model1,model2,model3,model4,model5)
+```
+```{r eval=F}
+ # imputation with median
+
+pbc3 <- Pbc3
+pbc3$event <- ifelse(pbc3$status != 0, 1, 0)
+
+pbc3$unit<-as.factor(pbc3$unit)
+pbc3$tment<-as.factor(pbc3$tment)
+pbc3$sex<-as.factor(pbc3$sex)
+pbc3$stage<-as.factor(pbc3$stage)
+pbc3$gibleed<-as.factor(pbc3$gibleed)
+
+pbc3$weight[is.na(pbc3$weight)]<-median(pbc3$weight,na.rm=TRUE)
+pbc3$alb[is.na(pbc3$alb)]<-median(pbc3$alb,na.rm=TRUE)
+pbc3$asptr[is.na(pbc3$asptr)]<-median(pbc3$asptr,na.rm=TRUE)
+
+
+pbc3$Lbili<-log(pbc3$bili)
+pbc3$Lcrea<-log(pbc3$crea)
+pbc3$Lalkph<-log(pbc3$alkph)
+pbc3$Lasptr<-log(pbc3$asptr)
+
+pbc3$Lbili2 <- pbc3$Lbili^2;  pbc3$Lbili3 <- pbc3$Lbili^3
+pbc3$Lalkph2 <- pbc3$Lalkph^2;  pbc3$Lalkph3 <- pbc3$Lalkph^3
+pbc3$age2 <- pbc3$age^2;  pbc3$age3 <- pbc3$age^3
+
+
+# somewhat "full" model (adding "stage" causes convergence issues)
+model<-coxph(formula = Surv(days,event) ~ unit+tment+sex+age+gibleed+Lcrea+alb+Lbili+Lalkph+Lasptr+weight, data = pbc3)
+summary(model)
+
+# model from stepwise() without imputation
+model1<-coxph(formula = Surv(days,event) ~ age+sex+alb+Lbili+tment, data = pbc3)
+summary(model1)
+
+# model from paper/from stepwise()
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment, data = pbc3)
+summary(model2)
+
+model3<-coxph(Surv(days, event) ~Lbili +Lbili2+Lbili3+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+
+model4<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+alb, data = pbc3)
+summary(model4)
+
+model5<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+summary(model5)
+
+AIC(model,model1,model2,model3,model4,model5)
+```
+```{r eval=F}
+# simply omit the patients with NAs
+pbc3 <- Pbc3
+pbc3<-na.omit(Pbc3)
+pbc3$event <- ifelse(pbc3$status != 0, 1, 0)
+
+pbc3$unit<-as.factor(pbc3$unit)
+pbc3$tment<-as.factor(pbc3$tment)
+pbc3$sex<-as.factor(pbc3$sex)
+pbc3$stage<-as.factor(pbc3$stage)
+pbc3$gibleed<-as.factor(pbc3$gibleed)
+
+pbc3$Lbili<-log(pbc3$bili)
+pbc3$Lcrea<-log(pbc3$crea)
+pbc3$Lalkph<-log(pbc3$alkph)
+pbc3$Lasptr<-log(pbc3$asptr)
+
+pbc3$Lbili2 <- pbc3$Lbili^2;  pbc3$Lbili3 <- pbc3$Lbili^3
+pbc3$Lalkph2 <- pbc3$Lalkph^2;  pbc3$Lalkph3 <- pbc3$Lalkph^3
+pbc3$age2 <- pbc3$age^2;  pbc3$age3 <- pbc3$age^3
+
+# somewhat "full" model (adding "stage" causes convergence issues)
+# somewhat "full" model (adding "stage" causes convergence issues)
+model<-coxph(formula = Surv(days,event) ~ unit+tment+sex+age+gibleed+Lcrea+alb+Lbili+Lalkph+Lasptr+weight, data = pbc3)
+summary(model)
+
+# model from stepwise() without imputation
+model1<-coxph(formula = Surv(days,event) ~ age+sex+alb+Lbili+tment, data = pbc3)
+summary(model1)
+
+# model from paper/from stepwise()
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment, data = pbc3)
+summary(model2)
+
+model3<-coxph(Surv(days, event) ~Lbili +Lbili2+Lbili3+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+
+model4<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+alb, data = pbc3)
+summary(model4)
+
+model5<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+summary(model5)
+
+AIC(model,model1,model2,model3,model4,model5)
+```
+
+```{r}
+# Do the imputation again to make sure the pbc3 data and the models are the right ones
+
+# variable transformations, etc are advanced to here to make the computations easier,
+# but we explored them first
+pbc3 <- Pbc3
+pbc3$event <- ifelse(pbc3$status != 0, 1, 0)
+
+pbc3$na <- nelsonaalen(data = pbc3, timevar = "days",  statusvar = "event")
+length(pbc3$na)
+
+micesurv0 <- mice(pbc3, maxit = 0)
+micesurvmeth <- micesurv0$meth
+micesurvpred <- micesurv0$pred
+#micesurvmeth[c("weight")] <- "norm"
+micesurvpred[, "days"] <- 0
+micesurvmeth
+micesurvpred
+micesurv0$imp$weight
+
+# seemed as though it worked
+pbc3 - complete(micesurv0)
+pbc3 <- complete(micesurv0)
+
+
+
+pbc3$unit<-as.factor(pbc3$unit)
+pbc3$tment<-as.factor(pbc3$tment)
+pbc3$sex<-as.factor(pbc3$sex)
+pbc3$stage<-as.factor(pbc3$stage)
+pbc3$gibleed<-as.factor(pbc3$gibleed)
+
+pbc3$Lbili<-log(pbc3$bili)
+pbc3$Lcrea<-log(pbc3$crea)
+pbc3$Lalkph<-log(pbc3$alkph)
+pbc3$Lasptr<-log(pbc3$asptr)
+
+pbc3$Lbili2 <- pbc3$Lbili^2;  pbc3$Lbili3 <- pbc3$Lbili^3
+pbc3$Lalkph2 <- pbc3$Lalkph^2;  pbc3$Lalkph3 <- pbc3$Lalkph^3
+pbc3$age2 <- pbc3$age^2;  pbc3$age3 <- pbc3$age^3
+
+
+# first way
+# the help file says data should be the incomplete data. Here pbc3 is complete!
+micesurv <- mice(pbc3, predictorMatrix = micesurvpred, maxit = 10, m = 1,
+                 printFlag = FALSE, seed = 2020)
+micesurv_mira <- with(micesurv, coxph(Surv(time = days, event) ~ age+sex+weight+alb+Lbili+tment))
+
+summary(pool(micesurv_mira), conf.int = TRUE)
+ 
+# second way
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment,
+                 data = pbc3)
+summary(model2)
+
+pbc3_mice_imp <- pbc3
+
+# somewhat "full" model (adding "stage" causes convergence issues)
+model<-coxph(formula = Surv(days,event) ~ unit+tment+sex+age+gibleed+Lcrea+alb+Lbili+Lalkph+Lasptr+weight, data = pbc3)
+summary(model)
+
+# model from stepwise() without imputation
+model1<-coxph(formula = Surv(days,event) ~ age+sex+alb+Lbili+tment, data = pbc3)
+summary(model1)
+
+# model from paper/from stepwise()
+model2<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment, data = pbc3)
+summary(model2)
+
+model3<-coxph(Surv(days, event) ~Lbili +Lbili2+Lbili3+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+
+model4<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+alb, data = pbc3)
+summary(model4)
+
+model5<-coxph(Surv(days, event) ~Lbili+weight+tment+sex+age+age2+age3+alb, data = pbc3)
+summary(model5)
+
+AIC(model,model1,model2,model3,model4,model5)
+```
+```{r}
+
+## we can use LRT for the model2 and model5 since they are nested models
+
+LRT<-2*(model5$loglik[2]-model2$loglik[2])
+LRT
+p<-1-pchisq(LRT,8-6)
+p    ## we prefer model2 ## reject the null
+```
+
+We use LRT to compare the top 2 models and do not find enough evidence to reject the simpler model. 
+
+Therefore, for parsimony, we go with model2 in this analysis. This also allows us to compare with the paper. 
+
+## Model Diagnostics
+We check the model assumptions once we decide on the suitable model.
+
+```{r}
+# recheck the Martingale residuals for the best model
+fit2_res_mar<-residuals(model2,type = 'martingale')
+
+par(mfrow=c(2,2))
+plot(pbc3$age,fit2_res_mar)
+smoothSEcurve(fit2_res_mar, pbc3$age)
+title("AGE")
+plot(pbc3$Lbili,fit2_res_mar)
+smoothSEcurve(fit2_res_mar,pbc3$Lbili)
+title("Lbili")
+plot(pbc3$alb,fit2_res_mar)
+smoothSEcurve(fit2_res_mar,pbc3$alb)
+title("alb")
+plot(pbc3$weight,fit2_res_mar)
+smoothSEcurve(fit2_res_mar,pbc3$weight)
+title("weight")
+```
+
+The linear functional forms of the continuous covariates seem reasonable.
+ 
+```{r}
+# test proportional hazard assumption
+
+cox.zph(model2)
+plot(cox.zph(model))
+ggcoxzph(cox.zph(model2))
+```
+
+We perform both formal tests and graphical inspections for assessing the  assumption. It seems that the PH assumption is reasonable for all of the covariates except for $age$ in our chosen model. We decide to keep this model since the global test passed.
+
+```{r}
+# alternative way of testing proportional hazard assumption 
+
+# Schoenfeld residuals
+fit3<-coxph(formula = Surv(days,event) ~ age+sex+weight+alb+Lbili+tment, data = pbc3)
+fit3_res_sch <- residuals(fit3, type = "schoenfeld") 
+event_time <- pbc3$days[pbc3$event==1] #Create event times
+par(mfrow=c(2,3))
+plot(event_time,fit3_res_sch[,1])
+smoothSEcurve(fit3_res_sch[,1], event_time)
+abline(h=0,col="blue")
+title("age")
+plot(event_time,fit3_res_sch[,2])
+smoothSEcurve(fit3_res_sch[,2], event_time)
+abline(h=0,col="blue")
+title("sex")
+plot(event_time,fit3_res_sch[,3])
+smoothSEcurve(fit3_res_sch[,3], event_time)
+abline(h=0,col="blue")
+title("weight")
+plot(event_time,fit3_res_sch[,4])
+smoothSEcurve(fit3_res_sch[,4], event_time)
+abline(h=0,col="blue")
+title("alb")
+plot(event_time,fit3_res_sch[,5])
+smoothSEcurve(fit3_res_sch[,5], event_time)
+abline(h=0,col="blue")
+title("Lbili")
+plot(event_time,fit3_res_sch[,6])
+smoothSEcurve(fit3_res_sch[,6], event_time)
+abline(h=0,col="blue")
+title("Treatment")
+```
+
+The Schoenfeld residuals indicate the PH assumption might not be met for the $Lbili$ variable. Again, we still move forward with this model since overall the PH assumption seems to be satisfied.
+
+## Estimation and Inference
+```{r results=T}
+# 2 way crosstab. Command is CrossTable(df$row, df$column). Package is gmodels
+
+CrossTable(pbc3$tment,pbc3$event, digits=2, prop.c=FALSE, prop.t=FALSE, prop.chisq=FALSE, expected=FALSE,dnn=c("Treatment", "Event"))
+```
+Among n=173 randomized to placebo, there were 46 deaths (27%)
+Among n=176 randomized to CyA, there were 44 deaths (25%)
+It appears that the difference between placebo and CyA groups is not significant without accounting for covariates.
+
+```{r,fig.show=T}
+#KM for treatments
+
+KM.trt<- survfit(Surv(days, event)~ tment, data = pbc3)
+summary(KM.trt)
+ggsurvplot(KM.trt, data =pbc3 , pval = TRUE,pval.coord = c(0, 0.7),surv.median.line = "hv", legend.labs = c("placebo","CyA"),
+           conf.int = TRUE,ylim=c(0.6,1),xlab="Time (days)",risk.table = TRUE,tables.height = 0.2,
+ tables.theme = theme_cleantable(),palette = c("#E7B800", "#2E9FDF"),
+ ggtheme = theme_bw())
+```
+
+The KM plots by treatment also confirms the first guess from the previous table, showing significant overlap in the confidence bands. The log-rank test (p-value annotated on the KM plots) also fails to detect any difference in survival between the placebo and treatment groups. 
+
+```{r}
+# Log Rank Test of Equality of Survival Distributions over groups
+# Command is survdiff(survivalobject~GROUPVARIABLE, data-DATAFRAME). Package is survival
+xxx <- survdiff(Surv(days,event)~tment, data=pbc3, rho=0)
+pchisq(xxx$chisq, df=1, lower.tail=F)
+```
+
+Note that our results are close to the paper.
+
+These univariate analyses may be misleading because of imbalance between the groups at
+entry with respect to important prognostic factors, whereas the multivariate analysis takes these differences in covariates into account, as discussed shortly.
+
+We also reproduce Figure 3 in the paper by categorizing the $Lbili$ levels into tertiles (this is exactly the same as categorizing $bili$, since the log function is monotone).
+
+```{r fig.show=T, fig.dim=c(15, 10)}
+pbc3$Treatment<-pbc3$tment
+levels(pbc3$Treatment)<-c("Placebo","CyA")
+                       
+
+pbc3$c<-cut(pbc3$Lbili,breaks=quantile(pbc3$Lbili,seq(0,1,1/3),include.lowest=FALSE))
+ggsurv<-ggsurvplot(survfit(Surv(days, event)~c+Treatment, data=pbc3), pval=TRUE,pval.coord = c(2, .1),
+title="Estimated survival between the two groups for patients
+in the lower, median, and upper tertiles by categorizing Log(bilirubin) micromoles/L",xlab="Time (days)",linetype = c("Treatment"),
+ legend.labs=c("Placebo Q1","CyA Q1","Placebo Q2", "CyA Q2","Placebo Q3","CyA Q3"),
+ palette = c("black", "#2E9FDF","black", "red","black", "green"),
+legend = "right")
+ggsurv
+```
+
+This does not exactly match the paper, and we are not sure if we used the same variable for categorizing patients in to tertiles. (Other variables have also been explored, but they do not lead to plots that match the paper.)  However, we do start to see the potential of accounting for more variables: here, after $Lbili$ is accounted for, there seems to be a visible advantage of the treatment (CyA) group over the placebo group for the third tertile of $Lbili$, and even perhaps in  the first tertile. This idea is further explored with the Cox PH regression models. The other thing to take away from this plot is that the higher the $Lbili$, the poorer the survival or the higher the hazard. This indicates that the coefficient on $Lbili$ is positive, which will be confirmed in the Cox model.
+
+```{r}
+pbc3$Treatment<-pbc3$tment
+levels(pbc3$Treatment)<-c("Placebo","CyA")
+                       
+pbc3$c3<-cut(pbc3$bili,breaks=quantile(pbc3$bili,seq(0,1,1/3),include.lowest=FALSE))
+ggsurv3<-ggsurvplot(survfit(Surv(days, event)~c3+Treatment, data=pbc3), pval=TRUE,pval.coord = c(2, .1),
+title="Estimated survival between the two groups for patients
+in the lower, median, and upper tertiles by categorizing (Bilirubin micromoles/L)",
+        xlab="Time(days)",linetype = c("Treatment"),
+         legend.labs=c("Placebo Q1","CyA Q1","Placebo Q2", "CyA Q2","Placebo Q3","CyA Q3"),
+        palette = c("black", "#2E9FDF","black", "red","black", "green"),
+      legend = "right")
+     
+ggsurv3
+
+pbc3$c<-cut(pbc3$Lbili,breaks=quantile(pbc3$Lbili,seq(0,1,1/3),include.lowest=FALSE))
+ggsurv<-ggsurvplot(survfit(Surv(days, event)~c+Treatment, data=pbc3), pval=TRUE,pval.coord = c(2, .1),
+title="Estimated survival between the two groups for patients
+in the lower, median, and upper tertiles by categorizing Log(bilirubin) micromoles/L",xlab="Time(days)",linetype = c("Treatment"),
+ legend.labs=c("Placebo Q1","CyA Q1","Placebo Q2", "CyA Q2","Placebo Q3","CyA Q3"),
+ palette = c("black", "#2E9FDF","black", "red","black", "green"),
+legend = "right")
+ggsurv
+
+pbc3$c1<-cut(pbc3$weight,breaks=quantile(pbc3$weight,seq(0,1,1/3),include.lowest=FALSE))
+ggsurv1<-ggsurvplot(survfit(Surv(days, event)~c1+Treatment, data=pbc3),
+title="Estimated survival between the two groups for patients
+in the lower, median, and upper tertiles by categorizing Body Weight (kg)", pval=TRUE,pval.coord = c(2, .1),xlab="Time(days)",linetype = c("Treatment"),
+ legend.labs=c("Placebo Q1","CyA Q1","Placebo Q2", "CyA Q2","Placebo Q3","CyA Q3"),
+palette = c("black", "#2E9FDF","black", "red","black", "green"),
+legend = "right")  
+
+ggsurv1
+
+pbc3$c2<-cut(pbc3$alb,breaks=quantile(pbc3$alb,seq(0,1,1/3),include.lowest=FALSE))
+ggsurv2<-ggsurvplot(survfit(Surv(days, event)~c2+Treatment, data=pbc3), pval=TRUE,pval.coord = c(2, .1),
+title="Estimated survival between the two groups for patients
+in the lower, median, and upper tertiles by categorizing Albumen (g/L)",xlab="Time(days)",linetype = c("Treatment"),
+ legend.labs=c("Placebo Q1","CyA Q1","Placebo Q2", "CyA Q2","Placebo Q3","CyA Q3"),
+ palette = c("black", "#2E9FDF","black", "red","black", "green"),
+legend = "right")
+
+ggsurv2
+
+
+pbc3$c4<-cut(pbc3$age,breaks=quantile(pbc3$age,seq(0,1,1/3),include.lowest=FALSE))
+ggsurv4<-ggsurvplot(survfit(Surv(days, event)~c4+Treatment, data=pbc3), pval=TRUE,pval.coord = c(2, .1),
+title="Estimated survival between the two groups for patients
+in the lower, median, and upper tertiles by categorizing age (years)",xlab="Time(days)",linetype = c("Treatment"),
+ legend.labs=c("Placebo Q1","CyA Q1","Placebo Q2", "CyA Q2","Placebo Q3","CyA Q3"),
+ palette = c("black", "#2E9FDF","black", "red","black", "green"),
+legend = "right")
+
+ggsurv4
+
+fits <- list(a = ggsurv, b = ggsurv1, c = ggsurv2, d = ggsurv3, e = ggsurv4)
+arrange_ggsurvplots(fits, print = TRUE, ncol = 3, nrow = 2)
+```
+
+```{r results=T}
+stargazer(model2, model5, type="text")
+# summary(model2)
+# summary(model5)
+```
+
+The above table lists the top two models side by side. We have already decided in favor of the simpler model based on the LRT, but we can also try justifying the choice from the coefficients. They are largely similar, except for the coefficients for $age$. We observed that the coefficients for quadratic and cubic terms of $age$ are, while statistically significant, of low magnitudes. This hints at overfitting issues. 
+
+We also note that our chosen model gives coefficient estimates and standard errors that are very close to model 2 in the paper.
+
+```{r}
+summary(model2)
+```
+
+Based on the chosen parsimonious model, we conclude that,  the hazard ratio of the treatment (CyA) group to the placebo group is 0.6343, with a confidence interval of [0.4116, 0.9774], accounting for other covariates. This shows that the treatment is statistically effective in reducing the hazard and improving survival of patients with the liver disease PBC.
+
+
+# Discussion
+
+There are limitations of this analysis. First, we might have not appropriately accounted for correlation among the patients in the same hospital (unit). Second, the PH assumption needs to be further verified. Nonetheless, the fact that our results closely match those in the original paper gives us some confidence that our conclusions are at least on the right track.
