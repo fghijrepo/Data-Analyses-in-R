@@ -1,0 +1,483 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+  ignorenonframetext,
+]{beamer}
+\title{MS Project Presentation}
+\subtitle{Bias-Variance Tradeoff and Cross-Validation}
+\author{Funfay Jen}
+\date{2022-01-03}
+
+\usepackage{pgfpages}
+\setbeamertemplate{caption}[numbered]
+\setbeamertemplate{caption label separator}{: }
+\setbeamercolor{caption name}{fg=normal text.fg}
+\beamertemplatenavigationsymbolsempty
+% Prevent slide breaks in the middle of a paragraph
+\widowpenalties 1 10000
+\raggedbottom
+\setbeamertemplate{part page}{
+  \centering
+  \begin{beamercolorbox}[sep=16pt,center]{part title}
+    \usebeamerfont{part title}\insertpart\par
+  \end{beamercolorbox}
+}
+\setbeamertemplate{section page}{
+  \centering
+  \begin{beamercolorbox}[sep=12pt,center]{part title}
+    \usebeamerfont{section title}\insertsection\par
+  \end{beamercolorbox}
+}
+\setbeamertemplate{subsection page}{
+  \centering
+  \begin{beamercolorbox}[sep=8pt,center]{part title}
+    \usebeamerfont{subsection title}\insertsubsection\par
+  \end{beamercolorbox}
+}
+\AtBeginPart{
+  \frame{\partpage}
+}
+\AtBeginSection{
+  \ifbibliography
+  \else
+    \frame{\sectionpage}
+  \fi
+}
+\AtBeginSubsection{
+  \frame{\subsectionpage}
+}
+\usepackage{amsmath,amssymb}
+\usepackage{lmodern}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usetheme[]{CambridgeUS}
+\usecolortheme{beaver}
+\usefonttheme{structurebold}
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\hypersetup{
+  pdftitle={MS Project Presentation},
+  pdfauthor={Funfay Jen},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+\urlstyle{same} % disable monospaced font for URLs
+\newif\ifbibliography
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+\usepackage{caption}
+% Make caption package work with longtable
+\makeatletter
+\def\fnum@table{\tablename~\thetable}
+\makeatother
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\titlegraphic{\centering \includegraphics[width=3cm]{tradeoff.jpg}}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\usepackage[]{natbib}
+\bibliographystyle{plainnat}
+
+\begin{document}
+\frame{\titlepage}
+
+\begin{frame}[allowframebreaks]
+  \tableofcontents[hideallsubsections]
+\end{frame}
+\hypertarget{background-and-motivation}{%
+\section{Background and Motivation}\label{background-and-motivation}}
+
+\begin{frame}{What is the Bias-Variance Tradeoff?}
+\protect\hypertarget{what-is-the-bias-variance-tradeoff}{}
+\begin{itemize}
+\tightlist
+\item
+  A central problem in \textbf{supervised learning}
+\item
+  Desires a model that simultaneously:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Captures the regularities in its training data
+  \item
+    Generalizes well to unseen data
+  \end{itemize}
+\item
+  Unfortunately,
+
+  \begin{itemize}
+  \tightlist
+  \item
+    High-variance learning methods may be able to represent their training set well but are at risk of overfitting to noisy or unrepresentative training data.
+  \item
+    In contrast, algorithms with high bias typically produce simpler models that may fail to capture important regularities (i.e.~underfit) in the data.
+  \end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Mathematics}
+\protect\hypertarget{mathematics}{}
+\begin{itemize}
+\tightlist
+\item
+  \(f\): fixed but unknown function
+\item
+  \(X\): can be univariate or multivariate
+\item
+  \(Y\): univariate
+\item
+  \(\epsilon\): zero mean, finite variance
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Mathematics}
+\protect\hypertarget{mathematics-1}{}
+\begin{equation}
+E_{D, \epsilon} [(Y - \hat f(X; D))^2] = (Bias_D [\hat f(X; D)])^2 + Var_D [\hat f(X; D)]) + \sigma^2 \label{eq:MSE}
+\end{equation}
+
+where
+
+\begin{equation}
+Bias_D[\hat f(X; D) = E_D[\hat f(X; D)]] - f(X) \label{eq:bias}
+\end{equation}
+
+and
+
+\begin{equation}
+Var_D [\hat f(X; D)] = E_D[(E_D [\hat f(X; D)] - \hat f(X; D))^2] \label{eq:var}
+\end{equation}
+\end{frame}
+
+\begin{frame}{Mathematics}
+\protect\hypertarget{mathematics-2}{}
+Since all three terms are non-negative, the irreducible error forms a lower bound on the expected error on unseen samples.
+
+\begin{itemize}
+\tightlist
+\item
+  \(\sigma^2\): lowest achievable predictive MSE
+\item
+  bias and variance: adds to it to result in a total MSE
+\item
+  tuning parameter: not visible in Equations \eqref{eq:MSE}, \eqref{eq:bias}, \eqref{eq:var}, but modulates the relative contributions of these terms
+\end{itemize}
+\end{frame}
+
+\hypertarget{method-of-simulating-the-bias-and-variance-tradeoff}{%
+\section{Method of Simulating the Bias and Variance Tradeoff}\label{method-of-simulating-the-bias-and-variance-tradeoff}}
+
+\begin{frame}{At a high level}
+\protect\hypertarget{at-a-high-level}{}
+\begin{itemize}
+\tightlist
+\item
+  Visualized as a plot of the total expected mean squared error (MSE) along with its three components (bias, variance and the irreducible error) against one or more hyperparameters.
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Compute the expectations in Equations \eqref{eq:MSE}, \eqref{eq:bias}, and \eqref{eq:var} via Monte Carlo simulation
+  \item
+    Do this for each set of hyperparameters to trace out a path (or high-dimensional surface)
+  \item
+    Visualize the resulting bias-variance tradeoff
+  \end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Procedurally}
+\protect\hypertarget{procedurally}{}
+(Refer to the report for details)
+
+\begin{enumerate}
+\item
+  Generate Training Sets
+\item
+  Generate Test Sets
+\item
+  Deploy the Statistical Method at a given set of hyperparameters
+\item
+  Compute Bias, Variance and MSE according to Equations \eqref{eq:bias}, \eqref{eq:var}, and \eqref{eq:MSE}
+\item
+  Repeat steps 1-4 over a grid of (sets of) hyperparameters and visualize the resulting mean squared error profile and how it is decomposed into its components.
+\end{enumerate}
+\end{frame}
+
+\hypertarget{method-of-cross-validation}{%
+\section{Method of Cross-Validation}\label{method-of-cross-validation}}
+
+\begin{frame}{Setup}
+\protect\hypertarget{setup}{}
+\begin{itemize}
+\tightlist
+\item
+  Generate \emph{one} single set of data containing observations
+\item
+  Randomly divide the set of observations into \(K\) folds of approximately equal size.
+\item
+  Each fold \(i\), \(1 \le i \le K\) is treated as a test set and the method is fit on the remaining \(K - 1\) folds. The mean squared error, \(MSE_i\), is computed on the observations in the held-out fold.
+\item
+  The K-fold CV estimate is computed by averaging these values,
+  \begin{equation}
+  CV_{(K)} = \frac{1}{K}\sum_{i=1}^K MSE_i \label{eq:cv-mse}
+  \end{equation}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{\# Relationship between the Bias-Variance Tradeoff and Cross-Validation}
+\protect\hypertarget{relationship-between-the-bias-variance-tradeoff-and-cross-validation}{}
+\includegraphics[width=1\textwidth,height=1\textheight]{./mc_vs_cv.png}
+\end{frame}
+
+\begin{frame}{Recap of the Main Differences}
+\protect\hypertarget{recap-of-the-main-differences}{}
+\begin{itemize}
+\tightlist
+\item
+  With CV, we cannot determine the bias component since in practice we do not know the true underlying function \(f\);
+\item
+  With CV, we cannot determine the variance component since in practice we often only have one set of data available and the \(K\) folds typically do not have the same \(X\) values--we cannot properly define variance in this setting;
+\item
+  With CV, we can still compute an average MSE over the folds. However, one issue is that the MSE's on different folds become correlated.
+\end{itemize}
+\end{frame}
+
+\hypertarget{simulation-studies}{%
+\section{Simulation Studies}\label{simulation-studies}}
+
+\begin{frame}{Exploring Smoothing Splines, Penalized Regression, Boosting, and SVM}
+\protect\hypertarget{exploring-smoothing-splines-penalized-regression-boosting-and-svm}{}
+\begin{itemize}
+\item
+  Draw \(X\) from a (univariate or multivariate) uniform distribution and the error from a normal distribution (or other distributions) with the same variance.
+\item
+  Overlay the cross-validated MSE curve obtained from a separate training set.
+\item
+  Overlay the test MSE curve from an independent test set
+
+  \begin{itemize}
+  \tightlist
+  \item
+    This is ``bogus'' since in real scenarios We wouldn't have been able to find the MSE since the response values are typically unknown.
+  \item
+    We do this to get a sense of how close we would have been to the (bogus, but practical) optimum for that particular test set if we used the hyperparameter from CV.
+  \end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Smoothing Splines}
+\protect\hypertarget{smoothing-splines}{}
+\(f_1\)
+
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{splines_1_f_1} \includegraphics[width=0.45\linewidth,height=1\textheight]{splines_2_f_1} 
+
+}
+
+\caption{Normal Errors (Left) and Double Expenential Errors (Right)}\label{fig:splines-plot-1}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Smoothing Splines}
+\protect\hypertarget{smoothing-splines-1}{}
+\(f_2\)
+
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{splines_1_f_2} \includegraphics[width=0.45\linewidth,height=1\textheight]{splines_2_f_2} 
+
+}
+
+\caption{Normal Errors (Left) and Double Expenential Errors (Right)}\label{fig:splines-plot-2}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Smoothing Splines}
+\protect\hypertarget{smoothing-splines-2}{}
+\(f_3\)
+
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{splines_1_f_3} \includegraphics[width=0.45\linewidth,height=1\textheight]{splines_2_f_3} 
+
+}
+
+\caption{Normal Errors (Left) and Double Expenential Errors (Right)}\label{fig:splines-plot-3}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Remarks}
+\protect\hypertarget{remarks}{}
+\end{frame}
+
+\begin{frame}{Penalized Regression \(f_1\)}
+\protect\hypertarget{penalized-regression-f_1}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{Ridge_f_1} \includegraphics[width=0.45\linewidth,height=1\textheight]{Lasso_f_1} 
+
+}
+
+\caption{RIdge (Left) and Lasso (Right)}\label{fig:penalized-1}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Penalized Regression \(f_2\)}
+\protect\hypertarget{penalized-regression-f_2}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{Ridge_f_2} \includegraphics[width=0.45\linewidth,height=1\textheight]{Lasso_f_2} 
+
+}
+
+\caption{RIdge (Left) and Lasso (Right)}\label{fig:penalized-2}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Penalized Regression \(f_3\)}
+\protect\hypertarget{penalized-regression-f_3}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{Ridge_f_3} \includegraphics[width=0.45\linewidth,height=1\textheight]{Lasso_f_3} 
+
+}
+
+\caption{RIdge (Left) and Lasso (Right)}\label{fig:penalized-3}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Penalized Regression \(f_4\)}
+\protect\hypertarget{penalized-regression-f_4}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=1\textheight]{Ridge_f_4} \includegraphics[width=0.45\linewidth,height=1\textheight]{Lasso_f_4} 
+
+}
+
+\caption{RIdge (Left) and Lasso (Right)}\label{fig:penalized-4}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Remarks}
+\protect\hypertarget{remarks-1}{}
+\end{frame}
+
+\begin{frame}{Boosting \(f_1\), \(f_2\)}
+\protect\hypertarget{boosting-f_1-f_2}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=0.7\textheight]{Boosting_f_1} \includegraphics[width=0.45\linewidth,height=0.7\textheight]{Boosting_f_2} 
+
+}
+
+\caption{Boosting}\label{fig:boosting-1}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Boosting \(f_3\), \(f_4\)}
+\protect\hypertarget{boosting-f_3-f_4}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=0.7\textheight]{Boosting_f_3} \includegraphics[width=0.45\linewidth,height=0.7\textheight]{Boosting_f_4} 
+
+}
+
+\caption{Boosting}\label{fig:boosting-2}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Remarks}
+\protect\hypertarget{remarks-2}{}
+\end{frame}
+
+\begin{frame}{SVM \(f_1\), \(f_2\)}
+\protect\hypertarget{svm-f_1-f_2}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=0.7\textheight]{svm_f_1} \includegraphics[width=0.45\linewidth,height=0.7\textheight]{svm_f_2} 
+
+}
+
+\caption{SVM}\label{fig:svm-1}
+\end{figure}
+\end{frame}
+
+\begin{frame}{SVM \(f_3\), \(f_4\)}
+\protect\hypertarget{svm-f_3-f_4}{}
+\begin{figure}
+
+{\centering \includegraphics[width=0.45\linewidth,height=0.7\textheight]{svm_f_3} \includegraphics[width=0.45\linewidth,height=0.7\textheight]{svm_f_4} 
+
+}
+
+\caption{SVM}\label{fig:svm-2}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Remarks}
+\protect\hypertarget{remarks-3}{}
+\end{frame}
+
+\begin{frame}
+\begin{figure}
+\hypertarget{id}{%
+\centering
+\includegraphics[width=0.7\textwidth,height=0.7\textheight]{./tradeoff.jpg}
+\caption{It's all about tradeoffs!}\label{id}
+}
+\end{figure}
+\end{frame}
+
+\hypertarget{q-a}{%
+\section{Q \& A}\label{q-a}}
+
+\begin{frame}{Thank You!}
+\protect\hypertarget{thank-you}{}
+\end{frame}
+
+\end{document}

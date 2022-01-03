@@ -1,0 +1,1722 @@
+---
+title: "Simulation Studies of the Bias-Variance Tradeoff and Cross-Validation for Select Statistical Learning Methods"
+author: "Funfay Jen"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2: default
+  bookdown::pdf_document2: default
+always_allow_html: true
+bibliography: references.bib  
+biblio-style: apa
+link-citations: true
+# csl: elsevier-harvard-with-titles-with-notes.csl
+nocite: '@*'
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhead[LO,LE]{MS Project}
+- \fancyfoot[LO,LE]{}
+- \usepackage{mathdots}
+- \DeclareMathOperator*{\E}{\mathbb{E}}
+- \fancyhead[RO,RE]{ST501:~Research, Fall 2021}
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(gridExtra)
+library(patchwork)
+library(glmnet)
+library(gbm)
+library(e1071)
+library(plotly)
+library(webshot)
+library(htmlwidgets)
+knitr::opts_chunk$set(message=F, fig.height=4, fig.width=5, echo = TRUE, tidy.opts=list(width.cutoff=60), tidy=F)
+```
+
+\makeatletter
+\let\ps@plain\ps@fancy
+\makeatother
+
+
+## Introduction
+Much of the core coursework for an MS in Statistics traditionally treats classical statistical methods and studies their properties in detail. In recent years, machine learning (ML) methods have emerged with great success in a wide array of applications, prompting statisticians to rethink many of the same statistical methods from a machine learning perspective, often blurring the boundary between statistics and ML. This MS project sets out in an attempt to round the MS curriculum with some popular statistical machine learning methods by treating them as black-box instrumentations with tunable knobs for various configurations. As the statistician would soon realize, all of these black boxes are subject to a common constraint known as the bias-variance tradeoff, one that governs the efficacy of many statistical methods with hyperparameters. This conceptual caricature (Figure \@ref(fig:blackboxdude)) of a statistician fumbling with some knobs protruding out of a black box epitomizes the process of priming a statistical method with the optimal hyperparameter(s). Through the explorations in this project, the hope is that the data analyst can gain a deep appreciation of the bias-variance tradeoff (what it means and how it can be quantified) via simulation studies, and at the end of the day will be ready to apply the very same principles to real data sets by appealing to its close cousin, cross-validation, and be able to tune those methods "just right" for the application.
+
+```{r blackboxdude, echo=FALSE, fig.cap="A typical day as a statistician", out.width = '70%', out.height = '70%', fig.align='center'}
+knitr::include_graphics("blackboxdude.png")
+```
+
+<!-- ![A typical day as a statistician](blackboxdude.png){#id .class width=70% height=70%} -->
+
+## Background and Methods
+We read the popular book *An Introduction to Statistical Learning* in its entirety both as an opportunity to review and reflect on some of the same statistical methods covered in the MS program from a statistical learning perspective and as a hands-on introduction to other mainstream statistical learning methods. The entire book serves as an inspiration for the simulation studies in this MS project. (N.B.: In what follows, unless otherwise specified, we use the term "test set" interchangeably with "validation set" as long as there is no confusion.)
+
+### Data Setting and the Bias-Variance Decomposition
+In a general univariate setting where we observe a quantitative response $Y$ and $p$ predictors $X = (X_1, X_2, \ldots, X_p)$, the central task in statistical learning is about estimating a fixed but unknown function $f$ that maps $X$ to $Y$ in the following fashion:
+
+$$Y = f(X) + \epsilon$$
+
+where $\epsilon$ is a random error term independent of X with 0 mean and variance $\sigma^2$. 
+
+
+If we denote our best estimate of the true function $f$ as $\hat f$, which can be found by countless algorithms used for supervised learning, it turns out that whichever function $\hat {f}$ we select, we can decompose its expected error on an unseen sample $X$ as follows:
+
+\begin{equation}
+E_{D, \epsilon} [(Y - \hat f(X; D))^2] = (Bias_D [\hat f(X; D)])^2 + Var_D [\hat f(X; D)]) + \sigma^2 (\#eq:MSE)
+\end{equation}
+
+where
+
+\begin{equation}
+Bias_D[\hat f(X; D) = E_D[\hat f(X; D)]] - f(X) (\#eq:bias)
+\end{equation}
+
+and
+
+\begin{equation}
+Var_D [\hat f(X; D)] = E_D[(E_D [\hat f(X; D)] - \hat f(X; D))^2] (\#eq:var)
+\end{equation}
+
+The expectation ranges over different choices of the training set $D = {(X_1, Y_1), (X_2, Y_2), \ldots, (X_n, Y_n)}$, all sampled from the same joint distribution $P(X, Y)$. 
+
+The $\sigma^2$ component is referred to as the irreducible error since this part will be present even if we can estimate the true underlying function $f$ perfectly (i.e., no bias and no variance). Thus $\sigma^2$ is the lowest achievable predictive MSE and the goal of statistical learning is to get as close to it as possible.
+
+It is noteworthy that the estimator $\hat f(X; D)$ can be found by a variety of statistical method. Furthermore, for each family of statistical method indexed by hyperparameters, the resulting $\hat f$ depends on the chosen hyperparameter, which in turn results in a different decomposition of the total expected mean square error into a bias and a variance component. It is natural to then seek a set of hyperparameters that results in low bias and low variance simultaneously so as to improve the overall expected prediction error.  Unfortunately, the two components generally trade with one another: as the bias increases, the variance tends to decrease, and vice versa. It is, however, possible to find the middle ground at which the sum of the two contributions is at the lowest possible for a specific data setting and a given family of statistical methods. 
+
+### Method of Simulating the Bias and Variance Tradeoff
+The bias-variance tradeoff is usually visualized as a plot of the total expected mean squared error (MSE) along with its three components (bias, variance and the irreducible error) against one or more hyperparameters, which often represent the degree of flexibility/complexity of a statistical learning method. In general, we expect that as the flexibility increases, the bias will decrease and the variance will increase. This is because a more flexible method learns the training data harder by picking up more nuances, but at the same time suffers from the random noises that accompany the real signal as they, too, are learned by heart. This results in predictions that can vary a lot (high variance) depending on the particular training and test data, but on average does well (low bias). 
+
+To make a graph depicting the aforementioned relationship, it is practically unfeasible to appeal to real data sets for two reasons: 1) There is typically no way to determine the  ground truth from a real data set; and 2) We need many independent data sets from the same data-generating mechanism to calculate the bias and the variance.  On the other hand, simulation studies are promising as they allow for customizing the true underlying function while affording an abundance of data. The choice of those functions $f$ is somewhat arbitrary, but can be easily modified based on any real data problems motivating the simulation studies. For the purpose of this project though, it suffices to investigate a small number of functions with varying complexity, and observe the resulting tradeoffs for some important families of statistical learning methods. Another design decision is with regard to the distribution from which the predictors $X$ are drawn. Once again though, this is best motivated by a real data problem and the simulation settings can be easily adapted to it. For simplicity, we choose to use uniform distributions. Last but not least, we shall also decide on the error distribution. The theoretical decomposition of the mean squared error into its components dictates that the errors be drawn from a distribution of zero mean and finite variance, but does not otherwise specify the shape of the distribution. It turns out that the particular distribution does not play a huge role in the bias-variance tradeoff. We experiment with a variety of error distributions for some statistical methods, but stick to the normal distribution for the rest.
+
+Once the data setting is determined, we just need to deploy the statistical methods onto the data and see how they perform on average. This can be recorded as the bias-variance tradeoff curve. The computations will essentially emulate the expectations in Equations \@ref(eq:MSE), \@ref(eq:bias), and \@ref(eq:var) by averaging over many independent, identically distributed data sets (a technique known as Monte Carlo simulation), and this will be done for each set of hyperparameters to trace out a path (or high-dimensional surface) over which the expected MSE and its components (bias, variance, and irreducible error) travel. The task of the statistician then becomes simple: visualize the resulting bias-variance tradeoff and cherry-pick the sweet spot at which the minimum of the expected MSE is attained and get a sense of how low that can be and at what hyperparameter values.
+
+The actual implementation is procedural, and goes as follows (note that the phrasing "set of hyperparameters" is used to account for the possibility that a statistical learning method can be tuned by more than one hyperparameter):  
+
+1. Generate Training Sets:
+
+    - $n_{sim}$ i.i.d. data sets each containing $n_{sample}$ i.i.d. observations of the form $(X, Y)$, where 
+
+        + $X \sim P_X(x)$,
+        + $Y = f(X) + \epsilon$, and
+        + $\epsilon \sim P_{\epsilon}(e)$
+        + $P_X$ and $P_{\epsilon}$ are  distributions from which the predictors $X$ and random noises $\epsilon$ are drawn, respectively
+        + $X$ can be either univariate or multivariate
+    
+2. Generate Test Sets:
+    - Same as in step 1, except that we randomly generate $n_{sample}$ observations of the predictors $X$ only once (instead of drawing $n_{sim}$ times), and replicate those same (randomly drawn) $X$ values $n_{sim}$ times. We generate the response $Y$ values the same way as before (that is, the errors will be drawn independently $n_{sim}$ times).
+    
+3. Deploy the Statistical Method:
+    - At this point we have $n_{sim}$ i.i.d. training sets each containing $n_{sample}$ observations of the form $(X, Y)$ and $n_{sim}$ test sets each containing $n_{sample}$ observations of the form $(X, Y)$ where the $X$ values are random but shared across the $n_{sim}$ sets of $Y$ values. (We must have the same set of $n_{sample}$ observations of $X$ across the $n_{sim}$ Monte Carlo iterations in order for the notions of bias and variance to be meaningful.)
+    - Train the learning  method configured at a given set of hyperparameters on each of the $n_{sim}$ training sets and predict the responses on a corresponding test set. We should obtain a prediction matrix of dimensions $n_{sim} \times n_{sample}$.
+
+4. Compute Bias, Variance and MSE according to Equations \@ref(eq:bias), \@ref(eq:var), and \@ref(eq:MSE) respectively from the prediction matrix (along with the true function $f$ and the response values $Y$ in the test sets) for that given set of hyperparameters.     
+    - At this point, the prediction matrix is reduced to a single number, one for each of the quantity of interest, at the given set of hyperparameters.
+
+5. Repeat steps 1-4 over a grid of (sets of) hyperparameters and visualize the resulting mean squared error profile and how it is decomposed into its components.
+
+### Method of Cross-Validation
+The book [@islr] discusses how to carry out cross-validation in detail, here we reiterate some of the key points.
+
+We generate *one* single set of data containing observations of the form $(X, Y)$ from the desired distribution. This approach involves randomly dividing the set of observations into $K$ groups, or folds, of approximately equal size. The first fold is treated as a test set (or a validation set, that's where the name "cross-validation" comes from...), and the method is fit on the remaining $K - 1$ folds. The mean squared error, $MSE_1$, is then computed on the observations in the held-out fold. This procedure is repeated $K$ times; each time, a different group of observations is treated as the test set. This process results in $K$ estimates of the test error, $MSE_1$, $MSE_2$, $\ldots$ , $MSE_K$. The K-fold CV estimate is computed by averaging
+these values,
+\begin{equation}
+CV_{(K)} = \frac{1}{K}\sum_{i=1}^K MSE_i (\#eq:cv-mse)
+\end{equation}
+
+### Relationship between the Bias-Variance Tradeoff and Cross-Validation
+The ideal of the Bias-Variance Tradeoff curve/surface confers key insights into how to best prime a given family of statistical learning methods so it is well-poised to understand unseen data. In real life, however, the statistician typically does not have access to an infinite pool of observations, let alone the true underlying function. Does this inconvenient reality jeopardize the statistician's mission of seeking the holy grail holding the best set of hyperparameters? A close inspection of Equations \@ref(eq:MSE), \@ref(eq:bias), and \@ref(eq:var) does indeed suggest that the lack of an abundance of data deprives the variance term of its meaning, whereas the ignorance of the underlying function hides the bias term from sight. Nevertheless, it does seem as though the MSE term stands a chance of being able to be calculated so long as we have *some* data available. And while the bias and variance terms contain important information about *how* the sweet spot is attained by revealing how the components of the total expected MSE trade off with one another, the trajectory of the MSE term alone suffices to inform "where" that sweet spot is. It is this observation that gives hope to the quest of the holy grail and makes the statistician realize that the cross-validated MSE can be an important proxy for the true MSE evaluated over many training and test sets. 
+
+Indeed, Figure \@ref(fig:mc-vs-cv) illustrates the conceptual link between the bias-variance tradeoff simulation and the cross-validation. The left panel illustrates the setup for simulating the bias-variance trade off: $n_{sim} = N$ different pairs of training and test sets are generated and the statistical method learns each of the training sets before taking a corresponding test. On the other hand, the right panel illustrates the setup for cross-validation: the same one data set is folded into $K$ parts and each part "rotates" to serve as the test set once with the remaining ($K-1$) folds serving as the training set. For the sake of conceptual simplicity, if we assume that $N \approx K$ and the training and test sets between the two panels are of comparable size, then both the bias-variance tradeoff simulation and the cross-validation take the same amount of "work" and one can see a direct correspondence in the roles the blue and magenta areas play between the two settings. This mental model immediate sheds light on Equation \@ref(eq:cv-mse). The reason we average the MSE over the $K$ folds is that we want to obtain an estimate for the *expectation* of the MSE over many held-out sets, much like we average the simulated MSE over many Monte Carlo iterations, which itself is an estimate of the true expected test MSE on unseen data. 
+
+The differences between cross-validation (CV) and the bias-variance tradeoff simulation are the following:
+
+- With CV, we cannot determine the bias component of a statistical learning method since in practice we do not know the true underlying function $f$;
+- With CV, we cannot determine the variance component of a statistical learning method since in practice we often only have one set of data available and the $K$ folds typically do not have the same $X$ values--we cannot properly define variance in this setting;
+- With CV, we can still compute an average MSE over the folds. However, one issue is that the MSE's on different folds become correlated. As can be seen on the right panel of Figure \@ref(fig:mc-vs-cv), when computing an MSE on a held-out fold, part of the data that are used to train the learning method is also used to the train learning methods that are to make predictions on the other folds! Each MSE on a given fold is still unbiased, so the overall estimated MSE given by Equation \@ref(eq:cv-mse) is still unbiased; however, its variance does not have the same properties as that of Equation \@ref(eq:MSE). The repercussion of this is that when one tries to use cross-validation to tune a statistical learning method, they might not hit the true sweet spot because the curve/surface of MSE vs hyperparameter(s) estimated by CV might not follow the same curve/surface estimated by Monte Carlo simulations. (Actually, even if one did find the same set of hyperparameters that optimizes the bias-variance tradeoff, they still might or might not achieve the best predictive performance on a random set of unseen test data. This is because the optimal set of hyperparameters only *on average* minimizes the predictive MSE, but such guarantee will succumb to the variations in individual test sets. We shall observe these points in simulations.)
+
+
+```{r mc-vs-cv, echo=FALSE, fig.cap="Conceptual Relationship between Bias-Variance Tradeoff Simulation and Cross-Validation", out.width = '100%', out.height = '100%', fig.align='center'}
+knitr::include_graphics("mc_vs_cv.png")
+```
+
+## Simulation Studies
+The conceptual underpinnings of this project have been covered in detail, which leads to a simple goal of the experimental components: we set out to verify the points stated in the previous section by experimenting with a selection of functions $f$ as well as statistical learning methods of interest. Due to space constraints, we only present part of the experiment by omitting some results from certain functions $f$ and from most error distributions other than the Normal. As a sanity check, we also verify numerically whether Equation \@ref(eq:MSE) holds. Such numerical results are also suppressed in this report for tidiness. The interested reader can refer to the codes for full details.
+
+### Smoothing Splines
+We start with a univariate analysis with smoothing splines as the family of statistical learning method. We use three functions with increasing flexibility:
+
+$$
+f_1 = 2.646429 + 0.06816071 * x + 0.0003169643 * x^2
+$$
+$$
+f_2 = 4.665886 - 0.042422 * x + 0.003422104 * x^2 - 0.00002854773 * x^3
+$$
+$$ \text{and}~~
+f_3 = 29.61689 - 1.389464*x + 0.024976*x^2 + 0.0002523139*x^3 - 0.000008158508*x^4 + 4.110106e-8*x^5
+$$
+We draw $X$ from a univariate uniform distribution and the error from a normal distribution and a variety of other distributions with the same variance. As mentioned earlier, the particular distribution of error does not play a huge role and for space we just show the results from a Double Exponential distribution along with those from the Normal distribution. Along with the bias-variance tradeoff curves, we also overlay the cross-validated MSE curve obtained from a separate training set. Furthermore, we draw an independent test set and fit the learning method with the grid of hyperparameters and record the corresponding test MSE. This is "bogus" in the sense that in real scenarios we will only use the optimal hyperparameter found from CV to train the method and use it to predict on the test set. We wouldn't have been able to find the MSE since the response values are typically unknown. Here, however, for pedagogical purposes, we can generate the test set from simulation and compute the "bogus" test MSE and compare that to the CV MSE as well as the true MSE. We will also get a sense of how close we would have been to the (bogus, but practical) optimum for that particular test set if we used the hyperparameter from CV. 
+
+```{r cache=TRUE, fig.width=10, fig.height=10, echo=FALSE, eval=TRUE, warning=FALSE}
+set.seed(12345)
+
+# BIAS-VARIANCE TRADEOFF
+
+# f1, f2, f3 increase in complexity
+f1 <- function(x) {
+  2.646429 + 0.06816071 * x + 0.0003169643 * x^2  
+}
+
+f2 <- function(x) {
+    4.665886 - 0.042422 * x + 0.003422104 * x^2 - 0.00002854773 * x^3
+}
+
+f3 <- function(x) {
+    29.61689 - 1.389464*x + 0.024976*x^2 + 0.0002523139*x^3 - 0.000008158508*x^4 + 4.110106e-8*x^5
+}
+
+
+# solve for the parameters in the distributions to give a variance of SIGMA2
+n_sample <- 100
+sigma2 <- 2
+
+var_t <- function(v, sigma2) {v / (v-2) - sigma2}
+v_t <- uniroot(var_t, lower=2, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+var_lapalce <- function(lambda, sigma2) {2 / lambda^2 - sigma2}
+lambda_laplace <- uniroot(var_lapalce, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+var_unif <- function(b, sigma2) {b^2 / 3 - sigma2}
+b_unif <- uniroot(var_unif, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+var_exp <- function(lambda, sigma2) {1/ lambda^2 - sigma2}
+lambda_exp <- uniroot(var_exp, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+d2_f <- 10 
+var_f <- function(d1, sigma2) {(2*d2_f^2*(d1+d2_f-2)) / (d1*(d2_f-2)^2*(d2_f-4)) - sigma2}
+d1_f <- uniroot(var_f, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+
+var_chisq <- function(k, sigma2) {2*k - sigma2}
+k_chisq <- uniroot(var_chisq, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+theta_gamma <- 10
+var_gamma <- function(k, sigma2) {k * theta_gamma^2 - sigma2}
+k_gamma <- uniroot(var_gamma, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+# error distributions with mean 0 and variance 2
+err_distns <- list(expression(rnorm(n_sample, 0, sqrt(sigma2))),
+       # expression(rt(n_sample, v_t)),
+       expression(rexp(n_sample, lambda_laplace)*(2*(runif(n_sample) > 0.5) - 1))#,
+       # expression(runif(n_sample, -b_unif, b_unif)),
+       # expression(rexp(n_sample, lambda_exp) - 1 / lambda_exp),
+       # expression(rf(n_sample, d1_f, d2_f) - d2_f / (d2_f - 2)),
+       # expression(rchisq(n_sample, k_chisq) - k_chisq),
+       # expression(rgamma(n_sample, k_gamma, scale=theta_gamma) - k_gamma * theta_gamma)
+       )
+
+err_distnNames <- c(paste0("Normal(0, ", round(sqrt(sigma2), 1), ")"),
+                    # paste0("t(", round(v_t, 1), ")"),
+                    paste0("Double Exponential(0, ", round(1/lambda_laplace, 1), ")")#,
+                    # paste0("Uniform(-", round(b_unif, 1), ", ", round(b_unif, 1), ")"),
+                    # paste0("Exponential(", round(lambda_exp, 1), ")"),
+                    # paste0("F(", d1_f, ", ", round(d2_f, 1), ")"),
+                    # paste0("Chi-square(", round(k_chisq, 1), ")"),
+                    # paste0("Gamma(", round(k_gamma, 1) ,", ", round(theta_gamma, 1), ")")
+                   )
+
+n_sim <- 100
+n_df <- 40
+
+f <- c(f1, f2, f3)
+
+for (m in 1:length(err_distns)) {
+  
+  for (w in seq(length(f))) {
+    prediction_matrix <- matrix(NA, nrow = n_sim, ncol = n_sample)
+    mse_temp <- matrix(NA, nrow = n_sim, ncol = n_df)
+    results <- matrix(NA, nrow = 4, ncol = n_df)
+    
+    # Train data -----
+    x_train <- replicate(n_sim, runif(n_sample, 0, 100))
+    f_train <- (f[[w]])(x_train) # a matrix of n_sample x n_sim 
+    
+    
+    epsilon_train <- replicate(n_sim, eval(err_distns[[m]]))
+    y_train <- f_train + epsilon_train # a matrix of n_sample x n_sim 
+    #dim(y_train)
+    
+    # Test data -----
+    x_test <- runif(n_sample, 0, 100)
+    f_test <- (f[[w]])(x_test) 
+    
+    epsilon_test <- replicate(n_sim, eval(err_distns[[m]]))
+    y_test <- replicate(n_sim, f_test) + epsilon_test
+    
+      
+    for (df_iter in seq(n_df)){
+      for (mc_iter in seq(n_sim)){
+        cspline <- smooth.spline(x_train[, mc_iter], y_train[, mc_iter], df = df_iter+1)
+        
+        cspline_predict <- predict(cspline, x_test)
+        
+        prediction_matrix[mc_iter, 1:n_sample] <- cspline_predict$y 
+        
+        # below we verify that the order of averaging does not matter:
+        # we could average over X first, and then over MC
+        mse_temp[mc_iter, df_iter] <- mean((cspline_predict$y - y_test[, mc_iter])^2)
+      }
+      
+      # avg over MC
+      var_test <- apply(prediction_matrix, 2, FUN = var) 
+      expectation_test <- apply(prediction_matrix, 2, FUN = mean)
+      squared_bias_test <- (expectation_test - f_test)^2
+      mse_test <- apply((t(t(prediction_matrix) - y_test))^2, 2, FUN=mean) 
+      
+      # avg over X
+      results[1, df_iter] <- mean(squared_bias_test)
+      results[2, df_iter] <- mean(var_test)
+      results[4, df_iter] <- mean(mse_test)
+    }
+    
+    # alternative way of calculating MSE by averaging over X first, and then over MC
+    results[3, 1:n_df] <- apply(mse_temp, 2, FUN = mean)
+    # print(results[3, ] - results[4, ]) # THEY ARE THE SAME
+    # print(results[1, ] + results[2, ] + var(as.vector(epsilon_test)) - results[4, ])
+    # print("")
+    
+    
+    # saveRDS(results, file = "./toy_cs_spline_bias_variance.rds")
+    
+    
+    # CROSS-VALIDATION
+    # Easy 10-fold cross-validation
+    # set.seed(123)
+    
+    K <-  10 # 10 folds
+  
+    # one separate training set for CV  
+    x_train_cv <- runif(n_sample, 0, 100)
+    f_train_cv <- (f[[w]])(x_train_cv) # size = n_sample 
+    epsilon_train_cv <- eval(err_distns[[m]])
+    y_train_cv <- f_train_cv + epsilon_train_cv # size = n_sample 
+    
+    folds <- sample(rep(1:K, length=length(x_train_cv)))
+    folds # shuffles (1:K,1:k,...,1:K) labels
+    table(folds)
+    cv_errors = matrix(NA, K, n_df)
+    
+    for(j in 1:K){ # here order of iteration opposite to that for simulating Bias-Var 
+      for(df_iter in seq(n_df)){
+        cv_fit <- smooth.spline(x_train_cv[folds != j], 
+                             y_train_cv[folds != j], 
+                             df = df_iter + 1)
+        pred = predict(cv_fit, x_train_cv[folds == j])$y
+        cv_errors[j, df_iter] = mean((y_train_cv[folds == j] - pred)^2) # avg over X
+      }
+    }
+    mse_cv <- apply(cv_errors, 2, mean) # avg over CV folds
+  
+    # TEST ERROR on an independent test set 
+    x_test_cv <- runif(n_sample, 0, 100)
+    f_test_cv <- (f[[w]])(x_test_cv) # size = n_sample 
+    epsilon_test_cv <- eval(err_distns[[m]])
+    y_test_cv <- f_test_cv + epsilon_test_cv # size = n_sample 
+    
+    cv_fit_full <- smooth.spline(x_train_cv, y_train_cv, 
+                                 df =  which.min(mse_cv) + 1)
+    pred_test = predict(cv_fit_full, x_test_cv)$y
+    test_err <- mean((y_test_cv - pred_test)^2) # avg over X
+    
+    # BOGUS TEST ERRORS on the same test set vs flexibility
+    test_err_bogus <- rep(NA, n_df)
+    for(df_iter in seq(n_df)){
+        cv_fit_full <- smooth.spline(x_train_cv, y_train_cv, 
+                                 df =  df_iter+1)
+        pred_test = predict(cv_fit_full, x_test_cv)$y
+        test_err_bogus[df_iter] <- mean((y_test_cv - pred_test)^2) # avg over X
+    }
+    
+    linesize = 1.3
+    # GRAPHING  
+    p1 <- ggplot(mapping=aes(x=seq(n_df) + 1)) + 
+      geom_line(aes(y=results[1,], color="bias"), size=linesize) +
+      geom_line(aes(y=results[2,], color="variance"), size=linesize) + 
+      geom_line(aes(y=results[4,], color="mse"), size=linesize) +
+      geom_hline(aes(yintercept = sigma2, color="irreducible error"), 
+                 size=linesize, linetype="dashed") + 
+      geom_line(aes(y=mse_cv, color="cv mse"), 
+                size=linesize, linetype="dotdash") +
+      geom_vline(xintercept=which.min(results[4,]) + 1, 
+                 color="red3", alpha=0.5, linetype="longdash") +
+      geom_vline(xintercept=which.min(mse_cv) + 1, 
+                 color="black", alpha=0.5, linetype="longdash") + 
+      geom_point(aes(which.min(results[4,]) + 1, min(results[4,])), 
+                 color = "red3", shape=18, size=6) +
+      geom_point(aes(which.min(mse_cv) + 1, min(mse_cv)), 
+                 color = "black", shape=18, size=6) +
+      geom_point(aes(which.min(test_err_bogus) + 1, min(test_err_bogus)), 
+                 color = "purple3", shape=18, size=6) +
+      geom_text(aes(which.min(results[4,]) + 1, min(results[4,])), 
+                label = paste("(", which.min(results[4,]) + 1, ", ",
+                              round(min(results[4,]), 2), ")"), 
+                color = "red3", size=5, 
+                nudge_y = ifelse(min(results[4, ]) > min(mse_cv), .4, -.4)) +
+      geom_text(aes(which.min(mse_cv) + 1, min(mse_cv)), 
+                label = paste("(", which.min(mse_cv) + 1, ", ", 
+                              round(min(mse_cv), 2), ")"), 
+                color = "black", size=5, 
+                nudge_y = ifelse(min(results[4, ]) > min(mse_cv), -.4, .4)) +
+      geom_text(aes(which.min(test_err_bogus) + 1, min(test_err_bogus)), 
+                label = paste("(", which.min(test_err_bogus) + 1, ", ", 
+                              round(min(test_err_bogus), 2), ")"), 
+                color = "purple3", size=5, 
+                nudge_y = ifelse(test_err > max(min(results[4, ]), min(mse_cv)), 
+                                    .7, 
+                                    ifelse(test_err < min(min(results[4, ]), min(mse_cv)),
+                                              -.7, 0))) +
+      geom_text(aes(which.min(mse_cv) + 1, test_err), 
+                label = paste("test error = ", round(test_err, 2)), 
+                color = "purple3", size=5, 
+                nudge_y = ifelse(test_err > max(min(results[4, ]), min(mse_cv)), 
+                                    1, 
+                                    ifelse(test_err < min(min(results[4, ]), min(mse_cv)),
+                                              -1, 0))) +
+      geom_line(aes(y=test_err_bogus, color="test error (bogus)"), 
+                size=linesize, linetype="dotted") +
+      scale_color_manual("", 
+         breaks=c("bias",       "variance",    "mse",  "irreducible error",                                "cv mse",     "test error (bogus)"),
+         values=c("turquoise4", "darkorange1", "red3", "cornflowerblue",
+                  "black",      "purple3")) + 
+      labs(x = "DF", y = "(Squared) Error", 
+           title = "Bias-Variance Tradeoff, Cross-Validation and Test Error Curves") +
+      coord_cartesian(ylim = c(0, 6)) + 
+      theme(legend.text=element_text(size=20),
+            legend.position = "top")
+    
+    # xlab = "Degrees of Freedom", ylab = "Variance"
+    # plot(results[2,], type = "l", xlab = "Degrees of Freedom", ylab = "Squared-Bias")
+    # plot(results[4,], type = "l", xlab = "Degrees of Freedom", ylab = "MSE")
+    
+    
+    p2 <- ggplot() + xlim(0, 100) + 
+      geom_point(mapping=aes(x_test_cv, y_test_cv)) + 
+      geom_function(fun = f[[w]], aes(color="true function"), size=linesize) + 
+      geom_line(aes(x=x_test_cv, y=pred_test, color="cv-fitted function"), 
+                size=linesize) + 
+      scale_color_manual("", 
+         breaks=c("true function", "cv-fitted function"),
+         values=c("blue4",         "lightcoral")) +
+      labs(x = "x_test", y = "y_test",
+           title = "Simulated Test Data, True Function, and Cross-Validated Fitted Function") + 
+      theme(legend.text=element_text(size=20),
+            legend.position = "top")
+    
+    p2 / p1 +
+            plot_layout(widths = c(1, 1), heights = c(1, 3)) +
+            plot_annotation(
+                title = paste("Error Distribution:", err_distnNames[[m]]),
+                theme = theme(plot.title = element_text(size = 15),
+                              text = element_text('mono')))
+    ggsave(file=paste0("splines_", m, "_f_",  w, ".png"))
+    
+  } 
+}
+```
+
+```{r splines-plot, echo=FALSE, fig.cap="Splines with Normal and with Double Expenential Errors", out.width = '45%', out.height = '100%', fig.align='center', fig.show="hold"}
+knitr::include_graphics(c("splines_1_f_1.png", "splines_2_f_1.png",
+                          "splines_1_f_2.png", "splines_2_f_2.png",
+                          "splines_1_f_3.png", "splines_2_f_3.png"))
+```
+
+
+The left column of Figure \@ref(fig:splines-plot) shows results from Normal errors. The first row in each subplot shows the true function $f$ and the fitted spline. The first two fitted splines are wigglier than the true functions because the signal-to-noise ratio is apparently low for the first two cases. The fitted function adheres more closely to the true function in the case of $f_3$. However, it is interesting to note that the wiggliness does not impair the fitted splines' ability to make sound predictions, as we observe in the second row in each of the subplots, where the minimum true MSE attained (in red) is very close to the irreducible error (=2). We note that as the degrees of freedom increases, bias decreases and variance increases, resulting in the characteristic Nike shape for the total expected true MSE. The black curve shows the cross-validated MSE, and we see that for $f_3$, the hyperparameter (DF for smoothing splines) chosen by CV coincides with the sweet spot in the bias-variance tradeoff, but for $f_1$ and $f_2$, it does not. Even when it does, when used for one specific test set, the smoothing spline might not be performing at its very best (purple curve) due to reasons explained earlier. Overall, as the underlying function becomes more complex, higher degrees of freedom in the smoothing spline is selected by cross-validation.
+
+One thing to point out is that both the cross-validated MSE and the MSE on one single test set took values lower than the irreducible error, whereas theory dictates that the expected true MSE cannot. How can we explain this? 
+
+For the cross-validated MSE, while it is true that the CV folds do not share the same values of the predictors $X$, and as a result the bias and the variance are ill-defined, thus making Equation \@ref(eq:MSE) inapplicable for the cross-validated MSE, it is still an *unbiased* estimator for the true MSE since each fold produces an MSE on *unseen* data.  As we alluded to earlier, its expectation over a large set of observations and many folds is unbiased, albeit with larger variance (induced by the positive correlation between individual terms in Equation \@ref(eq:cv-mse)). As such, if the expectation is estimated accurately, the cross-validated MSE should still hover over the line of irreducible error. Here the only reason it was able to attain lower values is simply due to the small scale on which simulations are made: there were only hundreds of observations, and with a ten-fold cross-validation (as we typically do), we only have tens of observations to train and test on for each fold division. The smaller effective sample size coupled with the larger variance are thought to be the culprit for the simulation errors, resulting in the deceptive illusion that the expected cross-validated MSE can be lower than the irreducible error. If we increase the sample size, we should eventually see that the line of irreducible error still bounds the cross-validated MSE from below.
+
+For the MSE on one single test set, it's a different story. note that the $MSE$ in Equation \@ref(eq:MSE) is a random variable, and as such it has its own variance, which the same equation does not address. All it guarantees is that over many replications of the experiment, the MSE must *on average* be no less than the irreducible error. An individual experiment, however,  is not subject to the law of large numbers and can be higher or lower than the expectation. 
+
+The right column of Figure \@ref(fig:splines-plot) shows results from Double Expenential errors. Similar behaviors are observed of the MSE curves. The same can be said for a variety of other error distributions.
+
+### Penalized Regression
+From here on we cruise into multivariate terrains. The predictors (45 of them) are now drawn from a multivariate uniform distribution, and the true functions now take a vector $X$ as input and produce a univariate $Y$ as output. For simplicity, we only draw errors from a Normal distribution. We entertain four different functions whose details are not as important as their qualitative features, as we decribe below (the interested reader can refer to the codes for details).
+
+- $f_1$: Purely linear with all predictors contributing equally to the response.
+- $f_2$: Purely linear but with only 2 contributing (equally) to the response.
+- $f_3$: Only 2 predictors contribute linearly, and some predictors contribute quadratically to the response.
+- $f_4$: Only 2 predictors contribute linearly, and some predictors contribute both quadratically and cubically to the response.
+
+```{r cache=TRUE, echo=FALSE, eval=TRUE}
+# Common Setup for Multivariate Analyses
+set.seed(12345)
+# BIAS-VARIANCE TRADEOFF
+
+# f1, f2, f3 increase in complexity
+f1 <- function(x) {
+  a <- rep(1, n_p)
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] 
+  }
+  a0
+}
+
+attenuation <- 25
+
+f2 <- function(x) {
+  a <- rep(1, n_p)
+  b <- rep(0, n_p)
+  b[1] <- (1/attenuation)^2
+  b[n_p / 2] <- (1/attenuation)^2
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2 # + c[i]*x[i]^3
+  }
+  a0
+}
+
+f3 <- function(x) {
+  a <- rep(1, n_p)
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2
+  }
+  a0
+}
+
+
+f4 <- function(x) {
+  a <- rep(0, n_p)
+  for (i in seq(length(a))) {
+    a[i] <- ifelse(n_p %% i == 0, 1, 0)
+  }
+  
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] 
+  }
+  a0
+}
+
+f5 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] 
+  }
+  a0
+}
+
+f6 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2
+  }
+  a0
+}
+ 
+
+f7 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  
+  c <- rep(0, n_p)
+  for (i in seq(length(c))) {
+    c[i] <- ifelse(n_p %% i == 0, (1/attenuation)^3, 0)
+  }
+    
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2 + c[i] * x[i]^3
+  }
+  a0
+}
+
+f8 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  
+  c <- rep(0, n_p)
+  for (i in seq(length(c))) {
+    c[i] <- ifelse(n_p %% i == 0, (1/attenuation)^3, 0)
+  }
+    
+  d <- rep(0, n_p)
+  for (i in seq(length(c))) {
+    d[i] <- ifelse(n_p %% i == 0, (1/attenuation)^4, 0)
+  }
+    
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2 + c[i] * x[i]^3 + d[i]*x[i]^4
+  }
+  a0
+}
+
+f <- c(f1, f5, f6, f7)
+
+# solve for the parameters in the distributions to give a variance of SIGMA2
+n_sample <- 500
+
+sigma2 <- 2
+
+var_t <- function(v, sigma2) {v / (v-2) - sigma2}
+v_t <- uniroot(var_t, lower=2, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+var_lapalce <- function(lambda, sigma2) {2 / lambda^2 - sigma2}
+lambda_laplace <- uniroot(var_lapalce, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+var_unif <- function(b, sigma2) {b^2 / 3 - sigma2}
+b_unif <- uniroot(var_unif, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+var_exp <- function(lambda, sigma2) {1/ lambda^2 - sigma2}
+lambda_exp <- uniroot(var_exp, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+d2_f <- 10 
+var_f <- function(d1, sigma2) {(2*d2_f^2*(d1+d2_f-2)) / (d1*(d2_f-2)^2*(d2_f-4)) - sigma2}
+d1_f <- uniroot(var_f, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+
+var_chisq <- function(k, sigma2) {2*k - sigma2}
+k_chisq <- uniroot(var_chisq, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+theta_gamma <- 10
+var_gamma <- function(k, sigma2) {k * theta_gamma^2 - sigma2}
+k_gamma <- uniroot(var_gamma, lower=0, upper=100, tol = 0.0001, sigma2=sigma2)$root
+
+# error distributions with mean 0 and variance 2
+err_distns <- list(expression(rnorm(n_sample, 0, sqrt(sigma2)))#,
+         # expression(rt(n_sample, v_t)),
+         # expression(rexp(n_sample, lambda_laplace)*(2*(runif(n_sample) > 0.5) - 1)),
+         # expression(runif(n_sample, -b_unif, b_unif)),
+         # expression(rexp(n_sample, lambda_exp) - 1 / lambda_exp),
+         # expression(rf(n_sample, d1_f, d2_f) - d2_f / (d2_f - 2)),
+         # expression(rchisq(n_sample, k_chisq) - k_chisq),
+         # expression(rgamma(n_sample, k_gamma, scale=theta_gamma) - k_gamma * theta_gamma)
+       )
+
+err_distnNames <- c(paste0("Normal(0, ", round(sqrt(sigma2), 1), ")")#,
+                    # paste0("t(", round(v_t, 1), ")"),
+                    # paste0("Double Exponential(0, ", round(1/lambda_laplace, 1), ")"),
+                    # paste0("Uniform(-", round(b_unif, 1), ", ", round(b_unif, 1), ")"),
+                    # paste0("Exponential(", round(lambda_exp, 1), ")"),
+                    # paste0("F(", d1_f, ", ", round(d2_f, 1), ")"),
+                    # paste0("Chi-square(", round(k_chisq, 1), ")"),
+                    # paste0("Gamma(", round(k_gamma, 1) ,", ", round(theta_gamma, 1), ")")
+                   )
+
+n_sim <- 80
+n_p <- 45
+```
+
+```{r cache=TRUE, fig.width=9, fig.height=7, echo=FALSE, eval=TRUE}
+# Penalized Methods-specific setup
+lambda_max <- 0.3
+n_lambda <- 500
+
+
+
+for (m in 1:length(err_distns)) {
+  # p <- list(list(), list())
+  for (i in seq(length(f))) {
+    p1 <- ggplot()
+    p2 <- ggplot()
+    for (alpha_value in c(0, 1)) {
+ 
+      # Train data -----
+      x_train <- replicate(n_sim, replicate(n_p, runif(n_sample, 0, 100)))
+      f_train <- matrix(NA, nrow=n_sample, ncol=n_sim) # a matrix of n_sample x n_sim 
+      for (k in seq(n_sim)) {
+          f_train[, k] <-  apply(x_train[,,k], 1, f[[i]])
+      }
+        
+      
+      epsilon_train <- replicate(n_sim, eval(err_distns[[m]]))
+      y_train <- f_train + epsilon_train # a matrix of n_sample x n_sim 
+      #dim(y_train)
+      
+      # Test data -----
+      x_test <- replicate(n_p, runif(n_sample, 0, 100))
+      f_test <- apply(x_test, 1, f[[i]]) 
+      
+      epsilon_test <- replicate(n_sim, eval(err_distns[[m]]))
+      y_test <- replicate(n_sim, f_test) + epsilon_test
+      
+      # set up data structures to store results
+      ridge_pred_array <- replicate(n_lambda, 
+                                    matrix(NA, nrow = n_sim, ncol = n_sample))
+      mse_temp <- matrix(NA, nrow = n_sim, ncol = n_lambda)
+      results <- matrix(NA, nrow = 4, ncol = n_lambda)
+      
+      lambda_grid <- 10^seq(from=lambda_max, to=-5, length.out=n_lambda)
+        
+      # glmnet() auto selects different lambda paths for different training data,
+      # which prevents Monte Carlo simulation
+      # Thus, we specify the lambda path for glmnet() based on the auto range from 
+      # several training sets
+      for (mc_iter in seq(n_sim)){
+        ridge_mod <- glmnet(x_train[,,mc_iter], y_train[, mc_iter], alpha = alpha_value, 
+                            lambda = lambda_grid)
+        
+        ridge_pred_array[mc_iter, , ] <-  predict(ridge_mod, x_test) # this assignment is across the horizontal level SLICES of the array
+        
+        mse_temp[mc_iter, ] <- apply((ridge_pred_array[mc_iter, , ] - y_test[, mc_iter])^2, 2, mean) # avg over X first
+      }
+    
+      
+      # avg over MC and then X
+      for (k in seq(n_lambda)) {
+        # bias2
+          results[1, k] <- mean((apply(ridge_pred_array[,,k], 2, FUN = mean) - f_test)^2) 
+        # var
+          results[2, k] <- mean(apply(ridge_pred_array[,,k], 2, FUN = var))
+        # mse  
+          results[4, k] <- mean(apply((ridge_pred_array[,,k] - t(y_test))^2, 2, FUN = mean))
+      }
+  
+      results[3, 1:n_lambda] <- apply(mse_temp, 2, FUN = mean) # avg over MC second
+      
+      # print(results[3, ] - results[4, ])
+      # print(results[1, ] + results[2, ] + var(as.vector(epsilon_test)) - results[4, ])
+      # print("")
+      # 
+      
+      # CROSS-VALIDATION
+      # Easy 10-fold cross-validation
+      # set.seed(123)
+      
+      K <-  10 # 10 folds
+    
+      # one separate training set for CV  
+      x_train_cv <- replicate(n_p, runif(n_sample, 0, 100))
+      f_train_cv <- apply(x_train_cv, 1, f[[i]]) # size = n_sample 
+      epsilon_train_cv <- eval(err_distns[[m]])
+      y_train_cv <- f_train_cv + epsilon_train_cv # size = n_sample 
+      
+      folds <- sample(rep(1:K, length=length(y_train_cv)))
+      folds # shuffles (1:K,1:k,...,1:K) labels
+      table(folds)
+      cv_errors = matrix(NA, K, n_lambda)
+      
+      for(j in 1:K){ # here order of iteration opposite to that for simulating Bias-Var 
+          cv_fit <- glmnet(x_train_cv[folds != j, ], 
+                           y_train_cv[folds != j], 
+                           alpha = alpha_value, 
+                           lambda = lambda_grid)
+          pred = predict(cv_fit, x_train_cv[folds == j,])
+          cv_errors[j, ] = apply((y_train_cv[folds == j] - pred)^2, 2, mean) # avg over X
+      }
+      mse_cv <- apply(cv_errors, 2, mean) # avg over CV folds
+    
+      # TEST ERROR on an independent test set 
+      x_test_cv <- replicate(n_p, runif(n_sample, 0, 100))
+      f_test_cv <- apply(x_test_cv, 1, f[[i]]) # size = n_sample 
+      epsilon_test_cv <- eval(err_distns[[m]])
+      y_test_cv <- f_test_cv + epsilon_test_cv # size = n_sample 
+      
+      cv_fit_full <- glmnet(x_train_cv, y_train_cv, alpha = alpha_value,
+                            lambda = lambda_grid)
+      coef(cv_fit_full, s = lambda_grid[which.min(mse_cv)])
+      
+      # instead of doing cross-validation manually above, we can also
+      # delegate it to the cv.glmnet() function
+      cv_auto <- cv.glmnet(x_train_cv, y_train_cv, alpha = alpha_value,
+                           lambda = lambda_grid)
+      cv_auto$lambda.min  == lambda_grid[which.min(mse_cv)] # TRUE                             
+      # plot(cv_auto)
+      
+      pred_test <-  predict(cv_fit_full, s=lambda_grid[which.min(mse_cv)], 
+                          x_test_cv)
+      test_err <- mean((y_test_cv - pred_test)^2) # avg over X
+      
+      # BOGUS TEST ERRORS on the same test set vs flexibility
+      test_err_bogus <- rep(NA, n_lambda)
+      for(l in seq(n_lambda)){
+          pred_test = predict(cv_fit_full, s=lambda_grid[l],
+                              x_test_cv)
+          test_err_bogus[l] <- mean((y_test_cv - pred_test)^2) # avg over X
+      }
+      
+  
+      linesize = 1.3
+      # GRAPHING  
+      g <- ggplot(mapping=aes(x=lambda_grid)) + 
+        geom_line(aes(y=results[1,], color="bias"), size=linesize) +
+        geom_line(aes(y=results[2,], color="variance"), size=linesize) + 
+        geom_line(aes(y=results[4,], color="mse"), size=linesize) +
+        geom_hline(aes(yintercept = sigma2, color="irreducible error"), 
+                   size=linesize, linetype="dashed") + 
+        geom_line(aes(y=mse_cv, color="cv mse"), 
+                  size=linesize, linetype="dotdash") +
+        geom_vline(xintercept=lambda_grid[which.min(results[4,])], 
+                   color="red3", alpha=0.5, linetype="longdash") +
+        geom_vline(xintercept=lambda_grid[which.min(mse_cv)], 
+                   color="black", alpha=0.5, linetype="longdash") + 
+        geom_point(aes(lambda_grid[which.min(results[4,])], min(results[4,])), 
+                   color = "red3", shape=18, size=6) +
+        geom_point(aes(lambda_grid[which.min(mse_cv)], min(mse_cv)), 
+                   color = "black", shape=18, size=6) +
+        geom_point(aes(lambda_grid[which.min(test_err_bogus)], min(test_err_bogus)), 
+                   color = "purple3", shape=18, size=6) +
+        geom_text(aes(lambda_grid[which.min(results[4,])], min(results[4,])), 
+                  label = paste("(", round(lambda_grid[which.min(results[4,])], 1), ", ",
+                                round(min(results[4,]), 2), ")"), 
+                  color = "red3", size=4, 
+                  nudge_y = ifelse(min(results[4, ]) > min(mse_cv), 
+                                   0.1*max(results[4,]), 
+                                  -0.1*max(results[4,]))) +
+        geom_text(aes(lambda_grid[which.min(mse_cv)], min(mse_cv)), 
+                  label = paste("(", round(lambda_grid[which.min(mse_cv)], 1), ", ", 
+                                round(min(mse_cv), 2), ")"), 
+                  color = "black", size=4, 
+                  nudge_y = ifelse(min(results[4, ]) > min(mse_cv), 
+                                   -0.1*max(results[4,]), 
+                                    0.1*max(results[4,]))) +
+        geom_text(aes(lambda_grid[which.min(test_err_bogus)], min(test_err_bogus)), 
+                label = paste("(", round(lambda_grid[which.min(test_err_bogus)], 1), ", ",                               round(min(test_err_bogus), 2), ")"), 
+                  color = "purple3", size=4, 
+                  nudge_y = ifelse(min(test_err_bogus) > max(min(results[4, ]), min(mse_cv)), 
+                                      0.15*max(results[4,]), 
+                                  ifelse(min(test_err_bogus) < min(min(results[4, ]), min(mse_cv)),
+                                                -0.15*max(results[4,]), 
+                                                 0.05*max(results[4,])))) +
+        geom_text(aes(lambda_grid[which.min(mse_cv)], test_err), 
+                  label = paste("test error = ", round(test_err, 2)), 
+                  color = "purple3", size=4, 
+                  nudge_x = 0.1 * 10^lambda_max,
+                  nudge_y = ifelse(test_err > max(min(results[4, ]), min(mse_cv)), 
+                                      0.25*max(results[4,]), 
+                                  ifelse(test_err < min(min(results[4, ]), min(mse_cv)),
+                                     -0.25*max(results[4,]), 
+                                         0))) +
+        geom_line(aes(y=test_err_bogus, color="test error (bogus)"), 
+                  size=linesize, linetype="dotted") +
+        scale_color_manual("", 
+           breaks=c("bias",       "variance",    "mse",  "irreducible error",                                "cv mse",     "test error (bogus)"),
+           values=c("turquoise4", "darkorange1", "red3", "cornflowerblue",
+                    "black",      "purple3")) + 
+        labs(x = expression(lambda), y = "(Squared) Error", 
+             title = "Bias-Var, CV and Test Error Curves",
+             subtitle = paste0("Error Distribution: ", err_distnNames[[m]], " ",
+                           ifelse(alpha_value == 0, 
+                                  " Ridge Regression ",
+                                  " Lasso Regression "),
+                           "f", i)) +
+       coord_cartesian(xlim = c(-.3, 10^lambda_max)) +
+       theme(legend.position = "top",
+             legend.text=element_text(size=20),
+             plot.subtitle = element_text(family="mono"))
+      
+      # xlab = "Degrees of Freedom", ylab = "Variance"
+      # plot(results[2,], type = "l", xlab = "Degrees of Freedom", ylab = "Squared-Bias")
+      # plot(results[4,], type = "l", xlab = "Degrees of Freedom", ylab = "MSE")
+      
+      # For some reason, any attempt to do prettier layout results in the 
+      # graphs being messed up!! took so much time to debug this with no avail
+      # UPDATE: probably need to specify DATA in ggplot() calls 
+      
+    
+      
+      if (alpha_value == 0) {
+         ggsave(filename=paste0("Ridge_f_", i, ".png"), 
+             plot=g)
+      } else {
+         ggsave(filename=paste0("Lasso_f_", i, ".png"), 
+             plot=g)
+      }
+      
+      
+    } 
+    # print(p1 + p2)
+  }
+  
+
+  # for (q in seq(1, length(f))) {
+  #   print(p[[1]][[q]][[1]] + p[[2]][[q]][[1]])
+  # }
+
+              
+}
+
+
+
+```
+
+```{r penalized, echo=FALSE, fig.cap="Penalized Regression (Ridge and Lasso)", out.width = '45%', out.height = '40%', fig.align='center', fig.show="hold"}
+knitr::include_graphics(c("Ridge_f_1.png", "Lasso_f_1.png", 
+                          "Ridge_f_2.png", "Lasso_f_2.png", 
+                          "Ridge_f_3.png", "Lasso_f_3.png", 
+                          "Ridge_f_4.png", "Lasso_f_4.png"))
+```
+
+Figure \@ref(fig:penalized) shows the results of applying penalized regression methods on the data. The left column shows the curves for ridge regression and the right column shows the curves for the lasso, both as a function of $\lambda$, the shrinkage parameter. For $f_1$, both ridge and lasso agree on no shrinkage, which reduces to linear regression. This is expected, since the true function is purely linear in all predictors. For $f_2$, lasso decides to shrink the estimator as it gets some sense that the true function is sparse in its contributing predictors. Ridge, on the other hand, still prefers no shrinkage. This is because in ridge regression, coefficient estimates will never be shrunk to zero and as such it cannot perform variable selection. For $f_3$, similar choices were made by ridge and lasso methods, likely because the quadratic contributions are not large enough to influence the fit. For $f_4$, however, both methods realize that a pure linear model is not adequate to capture the underlying function and incurs too much variance at the same time. Therefore they decide to shrink the estimates while giving up more on the bias. Overall, as the function becomes more nonlinear, both the ridge and the lasso do worse in terms of MSE since they are, at heart, linear models.
+
+It is noteworthy that while the bias does increase with larger $\lambda$ values, the variance in some cases also increases along with the bias. This can be surprising, but this is only a local behavior. As $\lambda \to \infty$, all coefficient estimates will be shrunk to zero, and so will be the variance. The tradeoff between the bias and the variance does not have to be a "zero-sum" game--they in general present a tradeoff but sometimes can both lose (or win). When we do observe the tradeoff, that is when the characteristic Nike shape appears and we have a non-zero $\lambda$ value indicating the need for shrinkage. When shrinkage is not needed, the variance in our simulations increases a bit along with bias for $\lambda > 0$, so as to "lock in" the optimal $\lambda$ value of 0. This is another way to think about the behaviors observed in these plots.
+
+<!-- ### Principal Component Regression -->
+
+### Tree-Based Methods (Boosting)
+There are two important families of tree-based methods: random forest, of which bagging is a special case, and boosting. Upon close study of these methods, we quickly realize that the bagging and random forest methods do not have tuning parameters, unless we count the choice of predictor subset size $m$ as such, which is typically not tuned. Boosting, on the other hand, has several tuning parameters, namely the number of trees $B$, the shrinkage parameter $\lambda$, and the number $d$ of splits in each tree. Of these, we typically have empirically set values for $\lambda$, which represents the speed at which learning occurs and for computational speedups for this project is set to 0.1, and $d$, which is set to 4. Thus we are left with just one hyperparameter, $B$. To further speed up the computations, we choose to have 10 predictors instead of 45.
+
+```{r cache=TRUE, echo=FALSE, eval=TRUE, warning=FALSE}
+n_sim <- 40
+n_B <- 20
+B_max <- 1 + (n_B-1) * 100
+B_seq <- seq(from = 1, to = B_max, length.out = n_B)
+
+n_p <- 10
+# for computational speedups, let the trees learn fast
+lambda_tree <- 0.1
+
+f <- c(f1, f5, f6, f7)
+
+
+xy_form <- as.formula(paste(paste0("V", n_p+1), ".", sep="~"))
+
+for (m in 1:length(err_distns)) {
+  for (i in seq(length(f))) {
+      # Train data -----
+      x_train <- replicate(n_sim, replicate(n_p, runif(n_sample, 0, 100)))
+      f_train <- matrix(NA, nrow=n_sample, ncol=n_sim) # a matrix of n_sample x n_sim 
+      for (k in seq(n_sim)) {
+          f_train[, k] <-  apply(x_train[,,k], 1, f[[i]])
+      }
+        
+      epsilon_train <- replicate(n_sim, eval(err_distns[[m]]))
+      y_train <- f_train + epsilon_train # a matrix of n_sample x n_sim 
+      #dim(y_train)
+      
+      # Test data -----
+      x_test <- replicate(n_p, runif(n_sample, 0, 100))
+      x_test_tbl <- as_tibble(x_test)
+      f_test <- apply(x_test, 1, f[[i]]) 
+      
+      epsilon_test <- replicate(n_sim, eval(err_distns[[m]]))
+      y_test <- replicate(n_sim, f_test) + epsilon_test
+      
+      # set up data structures to store results
+      boost_pred_array <- replicate(n_B, 
+                                    matrix(NA, nrow = n_sim, ncol = n_sample))
+      mse_temp <- matrix(NA, nrow = n_sim, ncol = n_B)
+      results <- matrix(NA, nrow = 4, ncol = n_B)
+      
+     for (q in seq(n_B)) {   
+      for (mc_iter in seq(n_sim)){
+        xy_tbl_train <- as_tibble(cbind(x_train[,,mc_iter], y_train[, mc_iter]))
+        
+        boost_mod <- gbm(xy_form, data=xy_tbl_train, distribution="gaussian", 
+                   n.trees=B_seq[q], shrinkage=lambda_tree, interaction.depth=4)
+         
+        boost_pred_array[mc_iter, , q] <-  predict(boost_mod, x_test_tbl) # this assignment is across the horizontal level LINES of the array
+        
+        mse_temp[mc_iter, q] <- mean((boost_pred_array[mc_iter, , q] - y_test[, mc_iter])^2) # avg over X first
+      }
+    
+      # avg over MC and then X
+        # bias2
+          results[1, q] <- mean((apply(boost_pred_array[,,q], 2, FUN = mean) - f_test)^2) 
+        # var
+          results[2, q] <- mean(apply(boost_pred_array[,,q], 2, FUN = var))
+        # mse  
+          results[4, q] <- mean(apply((boost_pred_array[,,q] - t(y_test))^2, 2, FUN = mean))
+    }
+  
+      results[3, ] <- apply(mse_temp, 2, FUN = mean) # avg over MC second
+      
+      # print(results[3, ] - results[4, ])
+      # print(results[1, ] + results[2, ] + var(as.vector(epsilon_test)) - results[4, ])
+      # print("")
+      
+      
+      # CROSS-VALIDATION
+      # Easy 10-fold cross-validation
+      # set.seed(123)
+      
+      K <-  10 # 10 folds
+    
+      # one separate training set for CV  
+      x_train_cv <- replicate(n_p, runif(n_sample, 0, 100))
+      f_train_cv <- apply(x_train_cv, 1, f[[i]]) # size = n_sample 
+      epsilon_train_cv <- eval(err_distns[[m]])
+      y_train_cv <- f_train_cv + epsilon_train_cv # size = n_sample 
+      
+      folds <- sample(rep(1:K, length=length(y_train_cv)))
+      folds # shuffles (1:K,1:k,...,1:K) labels
+      table(folds)
+      cv_errors = matrix(NA, K, n_B)
+      
+      xy_train_cv_tbl <- as_tibble(cbind(x_train_cv, y_train_cv))
+       
+      for(j in 1:K){ # here order of iteration opposite to that for simulating Bias-Var 
+        x_train_cv_tbl_j <- as_tibble(x_train_cv[folds == j,])
+        for (q in seq(n_B)) {
+          cv_fit <- gbm(y_train_cv ~ ., data=xy_train_cv_tbl[folds != j, ], distribution="gaussian", 
+                   n.trees=B_seq[q], shrinkage=lambda_tree, interaction.depth=4)
+
+          pred = predict(cv_fit, x_train_cv_tbl_j)
+          cv_errors[j, q] = mean((y_train_cv[folds == j] - pred)^2) # avg over X
+        }
+      }
+      mse_cv <- apply(cv_errors, 2, mean) # avg over CV folds
+    
+      # TEST ERROR on an independent test set 
+      x_test_cv <- replicate(n_p, runif(n_sample, 0, 100))
+      x_test_cv_tbl <- as_tibble(x_test_cv)
+      f_test_cv <- apply(x_test_cv, 1, f[[i]]) # size = n_sample 
+      epsilon_test_cv <- eval(err_distns[[m]])
+      y_test_cv <- f_test_cv + epsilon_test_cv # size = n_sample 
+      
+      cv_fit_full <- gbm(y_train_cv ~ ., data=xy_train_cv_tbl, distribution="gaussian", 
+                   n.trees=B_seq[which.min(mse_cv)], shrinkage=lambda_tree, interaction.depth=4)
+      
+      pred_test <-  predict(cv_fit_full, x_test_cv_tbl)
+      test_err <- mean((y_test_cv - pred_test)^2) # avg over X
+      
+      # BOGUS TEST ERRORS on the same test set vs flexibility
+      test_err_bogus <- rep(NA, n_B)
+      for(q in seq(n_B)){
+          cv_fit_full <- gbm(y_train_cv ~ ., data=xy_train_cv_tbl, distribution="gaussian", 
+                   n.trees=B_seq[q], shrinkage=lambda_tree, interaction.depth=4)
+      
+          pred_test = predict(cv_fit_full, x_test_cv_tbl)
+          test_err_bogus[q] <- mean((y_test_cv - pred_test)^2) # avg over X
+      }
+      
+  
+      linesize = 1.3
+      # GRAPHING  
+      g <- ggplot(mapping=aes(x=B_seq)) + 
+        geom_line(aes(y=results[1,], color="bias"), size=linesize) +
+        geom_line(aes(y=results[2,], color="variance"), size=linesize) + 
+        geom_line(aes(y=results[4,], color="mse"), size=linesize) +
+        geom_hline(aes(yintercept = sigma2, color="irreducible error"), 
+                   size=linesize, linetype="dashed") + 
+        geom_line(aes(y=mse_cv, color="cv mse"), 
+                  size=linesize, linetype="dotdash") +
+        geom_vline(xintercept=B_seq[which.min(results[4,])], 
+                   color="red3", alpha=0.5, linetype="longdash") +
+        geom_vline(xintercept=B_seq[which.min(mse_cv)], 
+                   color="black", alpha=0.5, linetype="longdash") + 
+        geom_point(aes(B_seq[which.min(results[4,])], min(results[4,])), 
+                   color = "red3", shape=18, size=6) +
+        geom_point(aes(B_seq[which.min(mse_cv)], min(mse_cv)), 
+                   color = "black", shape=18, size=6) +
+        geom_point(aes(B_seq[which.min(test_err_bogus)], min(test_err_bogus)), 
+                   color = "purple3", shape=18, size=6) +
+        geom_text(aes(B_seq[which.min(results[4,])], min(results[4,])), 
+                  label = paste("(", round(B_seq[which.min(results[4,])], 1), ", ",
+                                round(min(results[4,]), 2), ")"), 
+                  color = "red3", size=4, 
+                  nudge_y = ifelse(min(results[4, ]) > min(mse_cv), 
+                                   0.1*max(results[4,]), 
+                                  -0.1*max(results[4,]))) +
+        geom_text(aes(B_seq[which.min(mse_cv)], min(mse_cv)), 
+                  label = paste("(", round(B_seq[which.min(mse_cv)], 1), ", ", 
+                                round(min(mse_cv), 2), ")"), 
+                  color = "black", size=4, 
+                  nudge_y = ifelse(min(results[4, ]) > min(mse_cv), 
+                                   -0.1*max(results[4,]), 
+                                    0.1*max(results[4,]))) +
+        geom_text(aes(B_seq[which.min(test_err_bogus)], min(test_err_bogus)), 
+                label = paste("(", round(B_seq[which.min(test_err_bogus)], 1), ", ",                               round(min(test_err_bogus), 2), ")"), 
+                  color = "purple3", size=4, 
+                  nudge_y = ifelse(min(test_err_bogus) > max(min(results[4, ]), min(mse_cv)), 
+                                      0.15*max(results[4,]), 
+                                  ifelse(min(test_err_bogus) < min(min(results[4, ]), min(mse_cv)),
+                                                -0.15*max(results[4,]), 
+                                                 0.05*max(results[4,])))) +
+        geom_text(aes(B_seq[which.min(mse_cv)], test_err), 
+                  label = paste("test error = ", round(test_err, 2)), 
+                  color = "purple3", size=4, 
+                  nudge_x = 0.1 * B_max,
+                  nudge_y = ifelse(test_err > max(min(results[4, ]), min(mse_cv)), 
+                                      0.25*max(results[4,]), 
+                                  ifelse(test_err < min(min(results[4, ]), min(mse_cv)),
+                                     -0.25*max(results[4,]), 
+                                         0))) +
+        geom_line(aes(y=test_err_bogus, color="test error (bogus)"), 
+                  size=linesize, linetype="dotted") +
+        scale_color_manual("", 
+           breaks=c("bias",       "variance",    "mse",  "irreducible error",                                "cv mse",     "test error (bogus)"),
+           values=c("turquoise4", "darkorange1", "red3", "cornflowerblue",
+                    "black",      "purple3")) + 
+        labs(x = "Number of Trees", y = "(Squared) Error", 
+             title = "Bias-Var, CV and Test Error Curves",
+             subtitle = paste0("Error Distribution: ", err_distnNames[[m]], " ", "f", i)) +
+       # coord_cartesian(xlim = c(-.3, 10^lambda_max)) +
+       theme(legend.position = "top",
+             plot.subtitle = element_text(family="mono"))
+    
+      # print(g)
+      ggsave(filename=paste0("Boosting_f_", i, ".png"), 
+             plot=g)
+  }
+}
+
+
+
+```
+
+
+```{r boosting, echo=FALSE, fig.cap="Boosting", out.width = '50%', out.height = '70%', fig.align='center', fig.show="hold"}
+knitr::include_graphics(c("Boosting_f_1.png", "Boosting_f_2.png", "Boosting_f_3.png", "Boosting_f_4.png"))
+```
+
+Figure \@ref(fig:boosting) shows the bias-variance tradeoff curves for boosting for each of the same (up to the number of predictors) functions as before. A hallmark of these curves is that the MSE does not exhibit so much of the characteristic "Nike" shape observed in previous statistical learning methods as a "hinge" shape. The significance of this is that even though the minimum MSE could be achieved at a high number of trees, virtually all of the benefits of having a multitude of trees is reaped with a moderate number of trees. This behavior is observed for all of the four functions. Therefore, the statistician should be mindful when selecting the optimal hyperparameter by cross-validation in the case of boosting, since a lower number of trees achieving essentially the same predictive MSE while saving a ton of computational resources is generally preferable to a higher number of trees consuming too much computational resources with diminishing return. Moreover, CV might not even estimate the absolute sweet spot for the bias-variance tradeoff very accurately due to the flat bottom the curve hits after a drastic initial decrease in MSE. On the other hand, as can be seen in the plots, CV *will* do well if instead used to estimate the threshold of hyperparameter $B$ beyond which most of the decrease in MSE is achieved, thanks to how closely the cross-validated MSE adheres to the true expected MSE in the bias-variance tradeoff. The moral of the story is to use just enough trees and no more.
+
+Overall, in contrast to the penalized regression methods, which suffers from non-linearity, boosting suffers from *complexity*: largest MSE results from $f_1$, the function with all 10 predictors present.
+
+### Support Vector Machine (SVM)
+The book only treats the SVM in the classification setting, but the same family of methods can be applied in the regression setting as well, as we have here. Compared to the penalized regression and tree-based methods, a major difference of tuning the SVM from the previous methods is in the number of hyperparameters (tuning knobs) accessible to the statistician. In our case, we use the SVM with the radial kernel and *two* hyperparameters: $cost$ and $gamma$. A side effect of this is that we also explore a bit of three-dimensional data visualization for the bias-variance tradeoff *surface*. To speed up the computations, we use only 5 predictors, but the same ideas apply for any number of predictors.
+
+```{r cache=TRUE, echo=FALSE, eval=TRUE, warning =FALSE, fig.cap = "Support Vector Machine"}
+n_sample <- 50
+
+sigma2 <- 2
+
+# error distributions with mean 0 and variance 2
+err_distns <- list(expression(rnorm(n_sample, 0, sqrt(sigma2)))#,
+         # expression(rt(n_sample, v_t)),
+         # expression(rexp(n_sample, lambda_laplace)*(2*(runif(n_sample) > 0.5) - 1)),
+         # expression(runif(n_sample, -b_unif, b_unif)),
+         # expression(rexp(n_sample, lambda_exp) - 1 / lambda_exp),
+         # expression(rf(n_sample, d1_f, d2_f) - d2_f / (d2_f - 2)),
+         # expression(rchisq(n_sample, k_chisq) - k_chisq),
+         # expression(rgamma(n_sample, k_gamma, scale=theta_gamma) - k_gamma * theta_gamma)
+       )
+
+err_distnNames <- c(paste0("Normal(0, ", round(sqrt(sigma2), 1), ")")#,
+                    # paste0("t(", round(v_t, 1), ")"),
+                    # paste0("Double Exponential(0, ", round(1/lambda_laplace, 1), ")"),
+                    # paste0("Uniform(-", round(b_unif, 1), ", ", round(b_unif, 1), ")"),
+                    # paste0("Exponential(", round(lambda_exp, 1), ")"),
+                    # paste0("F(", d1_f, ", ", round(d2_f, 1), ")"),
+                    # paste0("Chi-square(", round(k_chisq, 1), ")"),
+                    # paste0("Gamma(", round(k_gamma, 1) ,", ", round(theta_gamma, 1), ")")
+                   )
+
+
+
+# f1, f2, f3 increase in complexity
+f1 <- function(x) {
+  a <- rep(1, n_p)
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] 
+  }
+  a0
+}
+
+attenuation <- 25
+
+f2 <- function(x) {
+  a <- rep(1, n_p)
+  b <- rep(0, n_p)
+  b[1] <- (1/attenuation)^2
+  b[n_p / 2] <- (1/attenuation)^2
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2 # + c[i]*x[i]^3
+  }
+  a0
+}
+
+f3 <- function(x) {
+  a <- rep(1, n_p)
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2
+  }
+  a0
+}
+
+
+f4 <- function(x) {
+  a <- rep(0, n_p)
+  for (i in seq(length(a))) {
+    a[i] <- ifelse(n_p %% i == 0, 1, 0)
+  }
+  
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] 
+  }
+  a0
+}
+
+f5 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] 
+  }
+  a0
+}
+
+f6 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2
+  }
+  a0
+}
+ 
+
+f7 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  
+  c <- rep(0, n_p)
+  for (i in seq(length(c))) {
+    c[i] <- ifelse(n_p %% i == 0, (1/attenuation)^3, 0)
+  }
+    
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2 + c[i] * x[i]^3
+  }
+  a0
+}
+
+f8 <- function(x) {
+  a <- rep(0, n_p)
+  a[1] <- 1
+  a[n_p / 2] <- 1
+  
+  b <- rep(0, n_p)
+  for (i in seq(length(b))) {
+    b[i] <- ifelse(n_p %% i == 0, (1/attenuation)^2, 0)
+  }
+  
+  c <- rep(0, n_p)
+  for (i in seq(length(c))) {
+    c[i] <- ifelse(n_p %% i == 0, (1/attenuation)^3, 0)
+  }
+    
+  d <- rep(0, n_p)
+  for (i in seq(length(c))) {
+    d[i] <- ifelse(n_p %% i == 0, (1/attenuation)^4, 0)
+  }
+    
+  a0 <- 10
+  for (i in seq(n_p)) {
+    a0 <- a0 + a[i]*x[i] + b[i]*x[i]^2 + c[i] * x[i]^3 + d[i]*x[i]^4
+  }
+  a0
+}
+
+f <- c(f1, f5, f6, f7)
+
+
+attenuation <- 25
+# only difference here: multiple tuning parameters
+n_sim <- 30
+
+n_cost <- 30
+n_gamma <- 15
+
+cost_seq <- seq(from = 0.001, to = 35, length.out = n_cost)
+gamma_seq <- seq(from = 0, to = 3, length.out = n_gamma)
+
+n_p <- 5
+
+
+xy_form <- as.formula(paste(paste0("V", n_p+1), ".", sep="~"))
+
+m <- 1
+  l <- htmltools::tagList()
+  for (i in seq(length(f))) {
+      # Train data -----
+      x_train <- replicate(n_sim, replicate(n_p, runif(n_sample, 0, 100)))
+      f_train <- matrix(NA, nrow=n_sample, ncol=n_sim) # a matrix of n_sample x n_sim 
+      for (k in seq(n_sim)) {
+          f_train[, k] <-  apply(x_train[,,k], 1, f[[i]])
+      }
+        
+      epsilon_train <- replicate(n_sim, eval(err_distns[[m]]))
+      y_train <- f_train + epsilon_train # a matrix of n_sample x n_sim 
+      #dim(y_train)
+      
+      # Test data -----
+      x_test <- replicate(n_p, runif(n_sample, 0, 100))
+      x_test_tbl <- as_tibble(x_test)
+      f_test <- apply(x_test, 1, f[[i]]) 
+      
+      epsilon_test <- replicate(n_sim, eval(err_distns[[m]]))
+      y_test <- replicate(n_sim, f_test) + epsilon_test
+      
+      # set up data structures to store results
+      svm_pred_array <- replicate(n_gamma, 
+                                  replicate(n_cost, 
+                                    matrix(NA, nrow = n_sim, ncol = n_sample)))
+      mse_temp <- replicate(n_gamma,
+                            matrix(NA, nrow = n_sim, ncol = n_cost))
+      results <- replicate(n_gamma,
+                            matrix(NA, nrow = 4, ncol = n_cost))
+    
+     for (r in seq(n_gamma)) {
+        for (q in seq(n_cost)) {   
+          for (mc_iter in seq(n_sim)){
+            xy_tbl_train <- as_tibble(cbind(x_train[,,mc_iter], y_train[, mc_iter]))
+            
+            svm_mod <- svm(xy_form, data=xy_tbl_train, kernel="radial", 
+                           gamma=gamma_seq[r], cost=cost_seq[q])
+             
+            svm_pred_array[mc_iter, , q, r] <-  predict(svm_mod, x_test_tbl) # this assignment is across the horizontal level LINES of the array
+            
+            mse_temp[mc_iter, q, r] <- mean((svm_pred_array[mc_iter, , q,r] - y_test[, mc_iter])^2) # avg over X first
+          }
+    
+      # avg over MC and then X (each is calculated by taking a matrix slice of svm_pred_array)
+        # bias2
+          results[1,q,r] <- mean((apply(svm_pred_array[,,q,r], 2, FUN = mean) - f_test)^2) 
+        # var
+          results[2,q,r] <- mean(apply(svm_pred_array[,,q,r], 2, FUN = var))
+        # mse  
+          results[4,q,r] <- mean(apply((svm_pred_array[,,q,r] - t(y_test))^2, 2, FUN = mean))
+          
+          results[3,q,r] <- mean(mse_temp[,q,r]) # avg over MC second
+      }
+     }
+
+  
+      # print(results[3,,] - results[4,,])
+      # print(results[1,,] + results[2,,] + var(as.vector(epsilon_test)) - results[4,,])
+      # print("")
+      
+      
+      # CROSS-VALIDATION
+      # Easy 10-fold cross-validation
+      # set.seed(123)
+      
+      
+      K <-  10 # 10 folds
+    
+      # one separate training set for CV  
+      x_train_cv <- replicate(n_p, runif(n_sample, 0, 100))
+      f_train_cv <- apply(x_train_cv, 1, f[[i]]) # size = n_sample 
+      epsilon_train_cv <- eval(err_distns[[m]])
+      y_train_cv <- f_train_cv + epsilon_train_cv # size = n_sample 
+      
+      folds <- sample(rep(1:K, length=length(y_train_cv)))
+      # folds # shuffles (1:K,1:k,...,1:K) labels
+      # table(folds)
+      cv_errors = replicate(n_gamma, matrix(NA, K, n_cost))
+      
+      xy_train_cv_tbl <- as_tibble(cbind(x_train_cv, y_train_cv))
+      
+      mse_cv <- matrix(NA, nrow=n_cost, ncol=n_gamma)
+      for(j in 1:K){ # here order of iteration opposite to that for simulating Bias-Var 
+        x_train_cv_tbl_j <- as_tibble(x_train_cv[folds == j,])
+         for (r in seq(n_gamma)) {
+           for (q in seq(n_cost)) {  
+              cv_fit <- svm(y_train_cv ~ ., data=xy_train_cv_tbl[folds != j, ],                                                           kernel="radial", 
+                                            gamma=gamma_seq[r], cost=cost_seq[q])
+              pred <-  predict(cv_fit, x_train_cv_tbl_j)
+              cv_errors[j, q, r] = mean((y_train_cv[folds == j] - pred)^2) # avg over X
+           }
+         }
+      }
+      
+      for (r in seq(n_gamma)) {
+           for (q in seq(n_cost)) {  
+             mse_cv[q, r] <- mean(cv_errors[, q, r])
+            }
+        }
+       
+      ## Using the built-in TUNE() function gives very close answers (except CV MSE values are a bit different)
+      
+      # tune.out = tune(svm, y_train_cv ~ ., data=xy_train_cv_tbl, kernel ="radial",
+      #                 ranges =list(cost=cost_seq, gamma=gamma_seq))
+      # summary(tune.out)
+      # plot(tune.out)
+
+      # TEST ERROR on an independent test set 
+      x_test_cv <- replicate(n_p, runif(n_sample, 0, 100))
+      x_test_cv_tbl <- as_tibble(x_test_cv)
+      f_test_cv <- apply(x_test_cv, 1, f[[i]]) # size = n_sample 
+      epsilon_test_cv <- eval(err_distns[[m]])
+      y_test_cv <- f_test_cv + epsilon_test_cv # size = n_sample 
+      
+      cv_fit_full <- svm(y_train_cv ~ ., data=xy_train_cv_tbl, kernel="radial", 
+                      gamma=gamma_seq[which(mse_cv==min(mse_cv), arr.ind=T)[1,2]],
+                      cost=cost_seq[which(mse_cv==min(mse_cv), arr.ind=T)[1,1]])
+      
+      pred_test <-  predict(cv_fit_full, x_test_cv_tbl)
+      test_err <- mean((y_test_cv - pred_test)^2) # avg over X
+      
+      # BOGUS TEST ERRORS on the same test set vs flexibility
+      test_err_bogus <- matrix(NA, nrow=n_cost, ncol=n_gamma)
+      for (r in seq(n_gamma)){
+        for(q in seq(n_cost)){
+          cv_fit_full <- svm(y_train_cv ~ ., data=xy_train_cv_tbl, kernel="radial", 
+                      gamma=gamma_seq[r], cost=cost_seq[q])
+      
+          pred_test = predict(cv_fit_full, x_test_cv_tbl)
+          test_err_bogus[q, r] <- mean((y_test_cv - pred_test)^2) # avg over X
+        }
+      }
+      
+      
+      # Plotly
+      bv_cost_opt <- cost_seq[which(results[4,,]==min(results[4,,]), arr.ind=T)[1,1]]
+      bv_gamma_opt <-gamma_seq[which(results[4,,]==min(results[4,,]), arr.ind=T)[1,2]]
+      bv_mse_opt <- min(results[4,,])  
+      
+      cv_cost_opt <- cost_seq[which(mse_cv==min(mse_cv), arr.ind=T)[1,1]]
+      cv_gamma_opt <- gamma_seq[which(mse_cv==min(mse_cv), arr.ind=T)[1,2]]
+      cv_mse_opt <- min(mse_cv)  
+      
+      test_cost_opt <- cost_seq[which(test_err_bogus==min(test_err_bogus), arr.ind=T)[1,1]]
+      test_gamma_opt <- gamma_seq[which(test_err_bogus==min(test_err_bogus), arr.ind=T)[1,2]]
+      test_mse_opt <- min(test_err_bogus)  
+      
+      sigma2_matrix <- matrix(sigma2, nrow=n_cost, ncol=n_gamma)
+      
+      # plotly assigns X along the columns and Y along the rows of the matrix Z
+      fig <- plot_ly(x = ~gamma_seq, y = ~cost_seq, showscale=FALSE, showlegend=TRUE)
+      fig <- fig %>% add_surface(z = ~results[1,,], name="Bias",
+                    colorscale = list(c(0,1),c("rgb(19,106,137)","rgb(14,97,127)")))
+      fig <- fig %>% add_surface(z = ~results[2,,], name="Variance", opacity = 0.98,
+                    colorscale = list(c(0,1),c("rgb(229,132,20)","rgb(224,125,13)")))
+      fig <- fig %>% add_surface(z = ~sigma2_matrix, name="Irreducible Error", opacity = 0.98,               colorscale = list(c(0,1),c("rgb(122,179,232)","rgb(117,175,229)")))
+      fig <- fig %>% add_surface(z = ~results[4,,], name="MSE", opacity = 0.98,
+                    colorscale = list(c(0,1),c("rgb(209,19,16)","rgb(206,15,12)")))
+      fig <- fig %>% add_surface(z = ~mse_cv, name="CV MSE", opacity = 0.98,
+                    colorscale = list(c(0,1),c("rgb(7,7,7)","rgb(5,4,4)")))
+      fig <- fig %>% add_surface(z = ~test_err_bogus, name="Test Error (bogus)", opacity = 0.98,               colorscale = list(c(0,1),c("rgb(126,61,211)","rgb(119,55,204)")))
+      fig <- fig %>% layout(scene = list(xaxis = list(title = "Gamma"),
+                                         yaxis = list(title = "Cost"),
+                                         zaxis = list(title = "(Squared) Error"),
+                                         annotations = list(
+      list(
+
+        showarrow = F,
+
+        x = bv_gamma_opt,
+
+        y = bv_cost_opt,
+
+        z = bv_mse_opt,
+
+        text = paste("Bias-Var:\n", "Cost =", round(bv_cost_opt, 3), "Gamma =", round(bv_gamma_opt, 3) , "MSE =", round(bv_mse_opt, 1)),
+
+        xanchor = "left",
+
+        xshift = 0,
+        yshift = -6,
+
+        opacity = 0.7
+
+      ),
+      list(
+
+       x = cv_gamma_opt,
+
+       y = cv_cost_opt,
+
+       z = cv_mse_opt,
+
+       text = paste("CV:\n", "Cost =", round(cv_cost_opt, 3), "Gamma =", round(cv_gamma_opt, 3) , "MSE =", round(cv_mse_opt, 1)),
+
+       textangle = 0,
+
+       ax = 0,
+
+       ay = -75,
+
+       font = list(
+
+         color = "black",
+
+         size = 12
+
+       ),
+
+       arrowcolor = "black",
+
+       arrowsize = 3,
+
+       arrowwidth = 1,
+
+       arrowhead = 1
+
+      ),
+      list(
+      
+       x = test_gamma_opt,
+      
+       y = test_cost_opt,
+      
+       z = test_mse_opt,
+      
+       ax = 50,
+      
+       ay = 0,
+      
+       text = paste("Test:\n", "Cost =", round(test_cost_opt, 3), "Gamma =", round(test_gamma_opt, 3) , "MSE =", round(test_mse_opt, 1)),
+      
+       arrowhead = 1,
+      
+       xanchor = "left",
+      
+       yanchor = "bottom"
+      
+      )
+     )
+    ),
+    title = paste0("Bias-Var, CV and Test Error Curves\n",
+             "Error Distribution: ", err_distnNames[[m]], " ", "Function f", i)
+   )    
+  
+  l[[i]] <- fig
+  }
+  l
+ 
+```
+
+```{r include=F, eval=F}
+# DOES NOT WORK, probably because webshot() and plotly are not fully compatible
+saveWidget(l[[1]], "temp.html")
+webshot("temp.html", "temp.png")
+```
+
+
+The interactive plots above display the results from SVM for the same four functions (up to the number of predictors). The color coding are the same as the previous two-dimensional bias-variance tradeoff curves. As we see, the bias dominates in the total expected MSE. The cross-validated $gamma$ agrees with the true optimal $gamma$, where as the cross-validated $cost$ deviates slightly from the true optimal $cost$. Interestingly, the hyperparameters chosen by CV agrees perfectly with the ("bogus") MSE on a specific test set. So in hindsight, it wasn't all that bad! This is due to the fact that the MSE surface exhibits a flat groove along the $cost$ dimension.
+
+Overall, similar to boosting and in contrast to the penalized regression methods, which suffers from non-linearity, the SVM also suffers from *complexity*: largest MSE results from $f_1$, the function with all 5 predictors present.
+
+## Conclusion and Future Work
+Through reading the *ISLR* book with the project on the bias-variance tradeoff as a guide,  we have studied the inner workings of a wide array of statistical learning methods, including many that are not selected for the project. Many of these methods are taking the center stage in solving many challenging but interesting problems. We then move on by treating these methods as black boxes and simulate the bias-variance tradeoff curves/surfaces thereof. The fact that the bias-variance tradeoff can serve as a unifying viewpoint from which a wide gamut of statistical learning methods are understood is satisfying. It is through carrying out the simulations in R that a deeper understanding of this central thesis is gained.  The intuition gained can be helpful for a practitioner who might routinely perform cross-validation in an attempt to tune the statistical learning method with respect to the data. A side task of the project is data visualization, which has allowed for intuitive understanding of the interplay between various quantities.
+
+Future work can be focused on exploring a wider selection of data settings as well as other important statistical learning methods. As well, cross-validation can also be applied to many exciting real data problems and further appreciation of the underlying bias-variance tradeoffs can be gained through these hands-on experiences. 
+
+
+<!-- # Working Toy Example -->
+
+```{r include=FALSE, eval=FALSE}
+set.seed(123)
+
+n_sim <- 2000
+n_df <- 40
+n_sample <- 1000
+
+
+prediction_matrix <- matrix(NA, nrow = n_sim, ncol = n_sample)
+mse_temp <- matrix(NA, nrow = n_sim, ncol = n_df)
+results <- matrix(NA, nrow = 4, ncol = n_df)
+
+# Train data -----
+x_train <- replicate(n_sim, runif(n_sample, -0.5, 0.5))
+f_train <- 0.8 * x_train + sin(6 * x_train) # a matrix of n_sample x n_sim 
+
+
+epsilon_train <- replicate(n_sim, rnorm(n_sample, 0, sqrt(2)))
+y_train <- f_train + epsilon_train # a matrix of n_sample x n_sim 
+#dim(y_train)
+
+# Test data -----
+x_test <- runif(n_sample, -0.5, 0.5)
+f_test <- 0.8 * x_test + sin(6 * x_test) 
+
+epsilon_test <- replicate(n_sim, rnorm(n_sample, 0, sqrt(2)))
+y_test <- replicate(n_sim, f_test) + epsilon_test
+
+
+for (df_iter in seq(n_df)){
+  
+  for (mc_iter in seq(n_sim)){
+    cspline <- smooth.spline(x_train[, mc_iter], y_train[, mc_iter], df = df_iter+1)
+    
+    cspline_predict <- predict(cspline, x_test)
+    
+    prediction_matrix[mc_iter, 1:n_sample] <- cspline_predict$y 
+    
+    mse_temp[mc_iter, df_iter] <- mean((cspline_predict$y - y_test[, mc_iter])^2)
+  }
+  
+  # avg over MC
+  var_test <- apply(prediction_matrix, 2, FUN = var) 
+  expectation_test <- apply(prediction_matrix, 2, FUN = mean)
+  squared_bias_test <- (expectation_test - f_test)^2
+  mse_test <- apply((t(t(prediction_matrix) - y_test))^2, 2, FUN=mean) 
+  
+  # avg over X
+  results[1, df_iter] <- mean(var_test)
+  results[2, df_iter] <- mean(squared_bias_test)
+  results[4, df_iter] <- mean(mse_test)
+}
+
+results[3, 1:n_df] <- apply(mse_temp, 2, FUN = mean)
+results[3, ] - results[4, ]
+results[1, ] + results[2, ] + var(as.vector(epsilon_test)) - results[4, ] 
+
+
+# saveRDS(results, file = "./toy_cs_spline_bias_variance.rds")
+
+# par(mfrow=c(1,2))
+plot(results[1,], type = "l", xlab = "Degrees of Freedom", ylab = "Variance")
+plot(results[2,], type = "l", xlab = "Degrees of Freedom", ylab = "Squared-Bias")
+plot(results[4,], type = "l", xlab = "Degrees of Freedom", ylab = "MSE")
+
+```
+
+<!-- # Another way -->
+```{r include=FALSE, eval=FALSE}
+f = function(x) {
+  x ^ 2
+}
+
+get_sim_data = function(f, sample_size = 100) {
+  x = runif(n = sample_size, min = 0, max = 1)
+  y = rnorm(n = sample_size, mean = f(x), sd = 0.3)
+  data.frame(x, y)
+}
+
+get_sim_data = function(f, sample_size = 100) {
+  x = runif(n = sample_size, min = 0, max = 1)
+  eps = rnorm(n = sample_size, mean = 0, sd = 0.75)
+  y = f(x) + eps
+  data.frame(x, y)
+}
+
+set.seed(1)
+sim_data = get_sim_data(f)
+
+fit_0 = lm(y ~ 1,                   data = sim_data)
+fit_1 = lm(y ~ poly(x, degree = 1), data = sim_data)
+fit_2 = lm(y ~ poly(x, degree = 2), data = sim_data)
+fit_9 = lm(y ~ poly(x, degree = 9), data = sim_data)
+
+set.seed(1)
+n_sims = 250
+n_models = 4
+x = data.frame(x = 0.90) # fixed point at which we make predictions
+predictions = matrix(0, nrow = n_sims, ncol = n_models)
+
+for (sim in 1:n_sims) {
+
+  # simulate new, random, training data
+  # this is the only random portion of the bias, var, and mse calculations
+  # this allows us to calculate the expectation over D
+  sim_data = get_sim_data(f)
+
+  # fit models
+  fit_0 = lm(y ~ 1,                   data = sim_data)
+  fit_1 = lm(y ~ poly(x, degree = 1), data = sim_data)
+  fit_2 = lm(y ~ poly(x, degree = 2), data = sim_data)
+  fit_9 = lm(y ~ poly(x, degree = 9), data = sim_data)
+
+  # get predictions
+  predictions[sim, 1] = predict(fit_0, x)
+  predictions[sim, 2] = predict(fit_1, x)
+  predictions[sim, 3] = predict(fit_2, x)
+  predictions[sim, 4] = predict(fit_9, x)
+}
+
+get_mse = function(truth, estimate) {
+  mean((estimate - truth) ^ 2)
+}
+
+get_bias = function(estimate, truth) {
+  mean(estimate) - truth
+}
+
+get_var = function(estimate) {
+  mean((estimate - mean(estimate)) ^ 2)
+}
+
+bias = apply(predictions, 2, get_bias, truth = f(x = 0.90))
+variance = apply(predictions, 2, get_var)
+mse = apply(predictions, 2, get_mse, truth = f(x = 0.90))
+
+all(diff(bias ^ 2) < 0)
+
+all(diff(variance) > 0)
+
+diff(mse) < 0 
+
+get_epe = function(realized, estimate) {
+  mean((realized - estimate) ^ 2)
+}
+
+y = rnorm(n = nrow(predictions), mean = f(x = 0.9), sd = 0.1)
+# y = rep(rnorm(1, mean = f(x=0.9), sd = 1), nrow(predictions))
+epe = apply(predictions, 2, get_epe, realized = y)
+epe
+
+bias^2 + variance + var(y) - epe 
+
+set.seed(1)
+n_sims = 1000
+X = runif(n = n_sims, min = 0, max = 1)
+Y = rnorm(n = n_sims, mean = f(X), sd = 0.3)
+
+f_hat_X = rep(0, length(X))
+
+for (i in seq_along(X)) {
+  sim_data = get_sim_data(f)
+  fit_2 = lm(y ~ poly(x, degree = 2), data = sim_data)
+  f_hat_X[i] = predict(fit_2, newdata = data.frame(x = X[i]))
+}
+
+mean((Y - f_hat_X) ^ 2)
+
+
+```
+
+## References {-}
+
+<div id="refs"></div>
